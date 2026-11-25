@@ -1,5 +1,5 @@
 defmodule Ecto.Adapters.HosiTest do
-  use Ecto.Hosi.Case
+  use Ecto.Hosi.Case, async: true
 
   defp user!(attrs \\ %{}) do
     %User{}
@@ -32,7 +32,7 @@ defmodule Ecto.Adapters.HosiTest do
 
     @tag :fake_only
     test "the hosigraph schema is derived from the Ecto schemas" do
-      schema = Fake.dump(Ecto.Hosi.Test.Repo.Conn).open.schema
+      schema = Fake.dump(Ecto.Hosi.Case.conn()).open.schema
 
       assert schema[:"user/email"] == %{type: :string, unique: :value}
       assert schema[:"user/age"] == %{type: :long}
@@ -268,7 +268,7 @@ defmodule Ecto.Adapters.HosiTest do
 
     test "without the pre-check, hosigraph's own refusal is turned into the same constraint" do
       user!(%{email: "race@x"})
-      meta = Ecto.Adapter.lookup_meta(Repo) |> Map.put(:precheck_unique, false)
+      meta = Ecto.Adapter.lookup_meta(Repo.get_dynamic_repo()) |> Map.put(:precheck_unique, false)
 
       assert {:invalid, [unique: "user_email_index"]} =
                Ecto.Adapters.Hosi.insert(

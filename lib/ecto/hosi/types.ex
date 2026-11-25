@@ -2,6 +2,10 @@ defmodule Ecto.Hosi.Types do
   @moduledoc false
   # Ecto types <-> the value types hosigraph keeps (any/string/long/double/boolean/keyword/ref).
   # Times are kept as microseconds since the epoch (a long), so `highest/4` can order them.
+  # Maps and arrays are kept as JSON text, binaries as Base64 text: strings, because hosigraph has
+  # no composite value type. They are stored and compared as the text, so they can be read back and
+  # matched with `==`, but not queried inside (use a real attribute for what you filter on).
+  # The JSON is Elixir's own `JSON` (1.18+).
 
   @epoch_date ~D[1970-01-01]
   @epoch_naive ~N[1970-01-01 00:00:00]
@@ -22,6 +26,12 @@ defmodule Ecto.Hosi.Types do
         :double
 
       :decimal ->
+        :string
+
+      t when t in [:map, :binary] ->
+        :string
+
+      {:array, _} ->
         :string
 
       :date ->
@@ -50,6 +60,9 @@ defmodule Ecto.Hosi.Types do
   def dumpers(:date, type), do: [type, ns(&dump_date/1)]
   def dumpers(p, type) when p in [:time, :time_usec], do: [type, ns(&dump_time/1)]
   def dumpers(:decimal, type), do: [type, ns(&dump_decimal/1)]
+  def dumpers(:map, type), do: [type, ns(&dump_json/1)]
+  def dumpers({:array, _}, type), do: [type, ns(&dump_json/1)]
+  def dumpers(:binary, type), do: [type, ns(&dump_binary/1)]
   def dumpers(_primitive, type), do: [type]
 
   def loaders(p, type) when p in [:utc_datetime, :utc_datetime_usec], do: [ns(&load_utc/1), type]
@@ -61,7 +74,39 @@ defmodule Ecto.Hosi.Types do
   def loaders(p, type) when p in [:time, :time_usec], do: [ns(&load_time/1), type]
   def loaders(:decimal, type), do: [ns(&load_decimal/1), type]
   def loaders(:float, type), do: [ns(&load_float/1), type]
+  def loaders(:map, type), do: [ns(&load_json/1), type]
+  def loaders({:array, _}, type), do: [ns(&load_json/1), type]
   def loaders(_primitive, type), do: [type]
+
+  @doc """
+  A field's value as Ecto should see it, read straight from a fact. Binaries are kept as Base64
+  text, and a text is already a binary, so Ecto would not run a loader over it: decode it here.
+  """
+  def read(schema, field, value) when is_binary(value) and is_atom(schema) and not is_nil(schema) do
+    if Ecto.Type.type(schema.__schema__(:type, field)) == :binary do
+      case Base.decode64(value) do
+        {:ok, bin} -> bin
+        :error -> value
+      end
+    else
+      value
+    end
+  end
+
+  def read(_schema, _field, value), do: value
+
+  @doc """
+  The right side of `x in ^list` arrives dumped as one JSON text (the list is an array-typed
+  parameter); a list of values is what the query needs.
+  """
+  def unpack_list(text) when is_binary(text) do
+    case JSON.decode(text) do
+      {:ok, list} when is_list(list) -> list
+      _ -> [text]
+    end
+  end
+
+  def unpack_list(vs), do: vs
 
   # Ecto hands `nil` ("no such fact") to these functions too; it stays `nil`.
   defp ns(fun),
@@ -83,6 +128,21 @@ defmodule Ecto.Hosi.Types do
   defp dump_time(_), do: :error
   defp dump_decimal(%Decimal{} = d), do: {:ok, Decimal.to_string(d, :normal)}
   defp dump_decimal(_), do: :error
+
+  defp dump_json(value) when is_map(value) or is_list(value), do: {:ok, JSON.encode!(value)}
+  defp dump_json(_), do: :error
+
+  defp dump_binary(b) when is_binary(b), do: {:ok, Base.encode64(b)}
+  defp dump_binary(_), do: :error
+
+  defp load_json(s) when is_binary(s) do
+    case JSON.decode(s) do
+      {:ok, value} -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  defp load_json(_), do: :error
 
   defp load_utc(n) when is_integer(n), do: {:ok, DateTime.from_unix!(n, :microsecond)}
   defp load_utc(_), do: :error

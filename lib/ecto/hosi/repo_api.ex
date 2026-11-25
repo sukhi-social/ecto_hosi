@@ -4,7 +4,7 @@ defmodule Ecto.Hosi.RepoApi do
 
   alias Ecto.Hosi.{Attr, Backend, Query}
 
-  defp meta(repo), do: Ecto.Adapter.lookup_meta(repo)
+  defp meta(repo), do: Ecto.Adapter.lookup_meta(repo.get_dynamic_repo())
 
   def datalog(repo, %Query{} = query, opts), do: datalog(repo, Query.to_request(query), opts)
 

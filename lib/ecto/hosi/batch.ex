@@ -7,7 +7,7 @@ defmodule Ecto.Hosi.Batch do
   alias Ecto.Hosi.{Attr, Backend}
 
   def run(repo, steps, _opts) do
-    meta = Ecto.Adapter.lookup_meta(repo)
+    meta = Ecto.Adapter.lookup_meta(repo.get_dynamic_repo())
     adapter = repo.__adapter__()
     steps = steps |> Enum.with_index(1) |> Enum.map(fn {s, n} -> normalize(s, n) end)
     by_name = Map.new(steps, &{&1.name, &1})

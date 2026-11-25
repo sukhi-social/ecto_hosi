@@ -60,6 +60,7 @@ hosigraph schema is derived from your Ecto schemas at start-up.
 and points to `Repo.datalog/1`.
 
 **Different:**
+* `:map`, `{:array, _}` and `:binary` fields are kept as text (JSON, JSON, Base64): they read back and match with `==` as a whole, but cannot be queried inside.
 * No transactions. Use `Repo.write_batch/2` for all-or-nothing writes.
 * `not` means "no such fact": `where: not (u.age > 30)` also returns rows with no age.
 * No `update_all`, `delete_all`, `stream`. `order_by`/`limit` cut in Elixir; use `Repo.highest/4` for "newest N".

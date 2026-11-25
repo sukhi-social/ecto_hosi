@@ -2,7 +2,7 @@ real? = System.get_env("HOSI_REAL") == "1"
 
 base = [
   dir: System.tmp_dir!() |> Path.join("ecto_hosi_test_dir"),
-  schemas: [Ecto.Hosi.Test.User, Ecto.Hosi.Test.Post, Ecto.Hosi.Test.Follow]
+  schemas: [Ecto.Hosi.Test.User, Ecto.Hosi.Test.Post, Ecto.Hosi.Test.Follow, Ecto.Hosi.Test.Doc]
 ]
 
 config =

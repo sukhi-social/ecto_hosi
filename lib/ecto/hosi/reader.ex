@@ -5,7 +5,7 @@ defmodule Ecto.Hosi.Reader do
   # `offset`, `select` of fields (or the struct), and `count`. Anything else raises and points
   # to `Repo.datalog/1`.
 
-  alias Ecto.Hosi.{Attr, Backend}
+  alias Ecto.Hosi.{Attr, Backend, Types}
 
   @cmp_ops [:==, :!=, :<, :<=, :>, :>=]
   @cmp_text %{==: "=", !=: "not=", <: "<", <=: "<=", >: ">", >=: ">="}
@@ -20,7 +20,6 @@ defmodule Ecto.Hosi.Reader do
         _ -> unsupported("a query without a schema", "name the schema: from u in MyApp.User")
       end
 
-    _ = schema
     fields = Enum.map(query.select.fields, &select_field/1)
     expr = where_expr(query)
     marker = Attr.marker(source)
@@ -47,7 +46,7 @@ defmodule Ecto.Hosi.Reader do
         if fields == [:count] do
           {1, [[length(rows)]]}
         else
-          out = Enum.map(rows, fn row -> Enum.map(fields, &value(&1, row, source)) end)
+          out = Enum.map(rows, fn row -> Enum.map(fields, &value(&1, row, source, schema)) end)
           {length(out), out}
         end
     end
@@ -157,7 +156,7 @@ defmodule Ecto.Hosi.Reader do
   defp comp({:in, _, [l, r]}, source, st) do
     with {:field, f} <- classify(l, st.params),
          {kind, vs} when kind in [:list, :value] <- classify(r, st.params) do
-      case List.wrap(vs) do
+      case vs |> Types.unpack_list() |> List.wrap() do
         [] ->
           {["[(= 0 1)]"], st}
 
@@ -317,6 +316,8 @@ defmodule Ecto.Hosi.Reader do
   defp int(%{expr: n}, _params) when is_integer(n), do: n
   defp int(%{expr: {:^, _, [ix]}}, params), do: Enum.at(params, ix)
 
-  defp value({:field, f}, row, source), do: field_value(row, f, source)
-  defp value({:lit, v}, _row, _source), do: v
+  defp value({:field, f}, row, source, schema),
+    do: Types.read(schema, f, field_value(row, f, source))
+
+  defp value({:lit, v}, _row, _source, _schema), do: v
 end

@@ -1,5 +1,5 @@
 defmodule Ecto.Hosi.NativeTest do
-  use Ecto.Hosi.Case
+  use Ecto.Hosi.Case, async: true
 
   describe "history, highest, erase" do
     test "history is every event of one entity" do
@@ -124,7 +124,7 @@ defmodule Ecto.Hosi.NativeTest do
         use Ecto.Schema
 
         schema "bad_type" do
-          field(:data, :map)
+          field(:data, Ecto.UUID)
         end
       end
 
@@ -132,7 +132,7 @@ defmodule Ecto.Hosi.NativeTest do
         Ecto.Hosi.Schema.build([BadKey])
       end
 
-      assert_raise ArgumentError, ~r/does not support the Ecto type :map/, fn ->
+      assert_raise ArgumentError, ~r/does not support the Ecto type Ecto.UUID/, fn ->
         Ecto.Hosi.Schema.build([BadType])
       end
     end

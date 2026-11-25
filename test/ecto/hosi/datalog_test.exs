@@ -1,5 +1,5 @@
 defmodule Ecto.Hosi.DatalogTest do
-  use Ecto.Hosi.Case
+  use Ecto.Hosi.Case, async: true
   import Ecto.Hosi.Query
 
   setup do

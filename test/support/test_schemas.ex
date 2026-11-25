@@ -45,6 +45,21 @@ defmodule Ecto.Hosi.Test.Post do
     do: post |> cast(attrs, [:title, :likes, :user_id]) |> validate_required([:title])
 end
 
+defmodule Ecto.Hosi.Test.Doc do
+  use Ecto.Schema
+  import Ecto.Changeset
+
+  schema "doc" do
+    field(:meta, :map)
+    field(:tags, {:array, :string})
+    field(:items, {:array, :map})
+    field(:scores, {:array, :integer})
+    field(:blob, :binary)
+  end
+
+  def changeset(doc, attrs), do: cast(doc, attrs, [:meta, :tags, :items, :scores, :blob])
+end
+
 defmodule Ecto.Hosi.Test.Follow do
   use Ecto.Schema
 

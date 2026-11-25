@@ -2,6 +2,7 @@ defmodule EctoHosi.MixProject do
   use Mix.Project
 
   @version "0.1.0"
+  @source_url "https://github.com/sukhi-social/ecto_hosi"
 
   def project do
     [
@@ -11,7 +12,12 @@ defmodule EctoHosi.MixProject do
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
       description:
-        "An Ecto adapter for hosigraph: events as truth, Datalog (with rules) for reading"
+        "An Ecto adapter for hosigraph: events as truth, Datalog (with rules) for reading",
+      source_url: @source_url,
+      package: [
+        links: %{"GitHub" => @source_url},
+        files: ~w(lib docs mix.exs README.md README.ja.md)
+      ]
     ]
   end
 

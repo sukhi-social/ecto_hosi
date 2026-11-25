@@ -1,14 +1,31 @@
 # ecto_hosi
 
-[hosigraph](https://github.com/sukhi-social/hosigraph)(出来事を足していくだけのログが真実で、「今」は Datalog DB に畳み込んだコピー)のための Ecto アダプター。
-Ecto の `Repo` / `Changeset` / `preload` はそのまま使えて、Datalog ならではの**ルール(再帰を含む)**も書けます。
+An [Ecto](https://hex.pm/packages/ecto) adapter for [hosigraph](https://github.com/sukhi-social/hosigraph),
+a database where an append-only event log is the truth and "now" is a Datalevin (Datalog) copy folded from it.
 
-> 状態: 0.1。本物の hosigraph + Datalevin 1.2.10 で、テスト 52 本が通っています(下の「確かめたこと・確かめていないこと」)。
-> **ただし、ルールを使うには hosigraph に「ルールを渡す口」が要ります。** 0.2 にはまだ無く、
-> [docs/hosigraph-patches/hosigraph-rules-input.patch](docs/hosigraph-patches/hosigraph-rules-input.patch)(約70行)で足せます。
-> 仕様と、試して分かったことは [docs/rules-input-contract.md](docs/rules-input-contract.md)。ルールを使わない部分は、パッチなしの hosigraph で動きます。
+You keep `Repo`, schemas, changesets and `preload`, and you also get **Datalog with recursive rules**,
+the **history** of any row, and **real erasure**. It has no SQL, joins, transactions or migrations.
+日本語: [README.ja.md](README.ja.md)
 
-## 使い方
+> 0.1, not on Hex. Tested on Linux aarch64 only.
+
+## Install
+
+```elixir
+# mix.exs
+{:ecto_hosi, github: "sukhi-social/ecto_hosi"}
+```
+
+You also need:
+
+* **libhosi**, hosigraph's compiled core. Prebuilt downloads exist only for tagged releases, so build it
+  (GHC 9.10.3 + cabal): `cabal build hosigraph-abi:flib:hosi` in a hosigraph checkout, then compile your
+  app with `HOSI_BUILD=source HOSI_LIB_DIR=<dir of libhosi.so> HOSI_INCLUDE_DIR=<hosigraph-abi/gen/include>`.
+  Without it, `mix deps.compile hosi` fails with `... is not in checksum.txt`. (I ran from a checkout with
+  `HOSI_PATH`; the `HOSI_LIB_DIR` route is from hosigraph-ex's docs and untried.)
+* **Datalevin**: the native `dtlv`, or JDK 21+ with the standalone jar (1.2.10).
+
+## Use
 
 ```elixir
 defmodule MyApp.Repo do
@@ -17,52 +34,54 @@ end
 
 config :my_app, MyApp.Repo,
   dir: "/var/lib/my_app/hosi",
-  schemas: [MyApp.User, MyApp.Post, MyApp.Follow]
+  schemas: [MyApp.User, MyApp.Post, MyApp.Follow],
+  open: %{config: %{khana: [:dtlv, "/opt/datalevin/dtlv"]}}
+  # or: %{config: %{khana: [:jvm, "java", "/opt/datalevin/datalevin-1.2.10-standalone.jar"]}}
 
 defmodule MyApp.User do
   use Ecto.Schema
-  use Ecto.Hosi.Schema          # 任意。hosi_unique を使うときだけ
-  hosi_unique :email            # hosigraph 自身が同じ email を二度と受けつけない
+  use Ecto.Hosi.Schema          # optional, for hosi_unique
+  hosi_unique :email            # hosigraph itself refuses a second row with this email
 
-  schema "user" do
+  schema "user" do              # needs an integer :id (the hosigraph entity id)
     field :name, :string
     field :email, :string
-    has_many :posts, MyApp.Post
     timestamps(type: :utc_datetime_usec)
   end
 end
 ```
 
-行は「事実」になります。`user` の `name` は `[id :"user/name" "Ada"]`。主キー `:id` が hosigraph のエンティティ ID です。
-hosigraph にテーブルはないので、各行に目印の属性 `:"user/ecto-kind"` も付きます(「すべてのユーザー」を探すための印)。
+Add the Repo to your supervision tree. Rows are stored as facts (`[1 :"user/name" "Ada"]`); the
+hosigraph schema is derived from your Ecto schemas at start-up.
 
-## Ecto のまま使えるもの
+**Works as in Ecto:** `insert` `update` (+`optimistic_lock`) `delete` `insert_all` `get` `get_by` `all` `one`
+`exists?` `aggregate(:count)` `preload`, `unique_constraint`. Queries cover one schema: `where`
+(`== != < <= > >= in is_nil not and or`), `order_by`, `limit`, `offset`, field `select`. Anything else raises
+and points to `Repo.datalog/1`.
 
-`insert` `update`(`optimistic_lock` つき) `delete` `insert_all` `get` `get_by` `all` `one` `exists?` `aggregate(:count)` `preload` と、changeset の `unique_constraint`。
+**Different:**
+* No transactions. Use `Repo.write_batch/2` for all-or-nothing writes.
+* `not` means "no such fact": `where: not (u.age > 30)` also returns rows with no age.
+* No `update_all`, `delete_all`, `stream`. `order_by`/`limit` cut in Elixir; use `Repo.highest/4` for "newest N".
 
-クエリは1つのスキーマに対して、`where`(`== != < <= > >= in is_nil not and or`)、`order_by`、`limit`、`offset`、フィールドの `select`。
-それ以上(join など)は、わざと例外にして `Repo.datalog/1` を案内します。
-
-## Ecto と違うところ
-
-* **トランザクションはありません。** hosigraph の書き込みは「1つの束を丸ごと」なので、Ecto の1歩ずつのトランザクションとは合いません。
-  代わりに `Repo.write_batch/2`(下)で、複数行を全部成功か全部失敗で書けます。
-  関連つきの `Repo.insert` は、親と子を順に書きます(まとめては失敗しません)。
-* **`not` は「そういう事実がない」です。** `where: not (u.age > 30)` は、年齢の事実がない行も拾います(SQL は `NULL` の行を拾いません)。`!=` `<` などは、事実があることが必要で、SQL と同じです。
-* `update_all` / `delete_all` / `stream` はありません。マイグレーションもありません(hosigraph のスキーマは Ecto のスキーマから、Repo の起動時に作ります)。
-
-## Repo に足される関数
+**Added to your Repo:**
 
 ```elixir
-# ルール(再帰つき)で読む
+Repo.history(id)                      # every event of that entity
+Repo.highest(Post, :inserted_at, 20)  # newest first -> {structs, last}; next page: after: last
+Repo.erase([[:ids, [id]]])            # really delete (account removal)
+Repo.write_batch(
+  insert: {:user, user_changeset},
+  insert: {:post, post_changeset, refs: [user_id: :user]}   # may point at a parent not yet written
+)                                     #=> {:ok, %{user: ..., post: ...}} | {:error, name, reason}
+```
+
+**Rules (recursive Datalog):**
+
+```elixir
 defmodule MyApp.Rules do
   use Ecto.Hosi.Rules
-
-  # a は b にたどり着ける = a が b をフォローしている、または a のフォロー先からたどり着ける
-  rule :reachable, [a, b] do
-    match MyApp.Follow, from: a, to: b
-  end
-
+  rule :reachable, [a, b] do match MyApp.Follow, from: a, to: b end
   rule :reachable, [a, c] do
     match MyApp.Follow, from: a, to: b
     reachable(b, c)
@@ -70,74 +89,30 @@ defmodule MyApp.Rules do
 end
 
 import Ecto.Hosi.Query
-me = 1
-MyApp.Repo.datalog(datalog find: [b], where: [reachable(^me, b)], rules: MyApp.Rules)
-#=> [[2], [3], [4]]
-
-Repo.history(id)                      # そのエンティティの全イベント
-Repo.highest(Post, :inserted_at, 20)  # 新しい順のページ。{structs, last}、次は after: last
-Repo.erase([[:ids, [id]]])            # 本当に消す(退会など)
-
-Repo.write_batch(                     # 全部成功か全部失敗の1回の書き込み
-  insert: {:user, user_changeset},
-  insert: {:post, post_changeset, refs: [user_id: :user]},   # まだ存在しない親を指せる
-  update: {:other, other_changeset},
-  delete: {:old, old_struct}
-)
-#=> {:ok, %{user: %User{}, post: %Post{}, ...}}   または {:error, 名前, changesetか :stale}
+Repo.datalog(datalog find: [b], where: [reachable(^me, b)], rules: MyApp.Rules)  #=> [[2], [3]]
 ```
 
-ルールは**コンパイル時に**次を確かめます: 頭・比較・`not` の変数がどこかで束縛されていること、同じルールの引数の数、フィールド名がスキーマにあること、
-そして**層化**(`not` を通して自分自身に戻るルールがないこと。そういうルールには答えが1つに決まりません)。
+Checked at compile time (bound variables, arities, field names, stratification).
+Details: [docs/rules-input-contract.md](docs/rules-input-contract.md).
 
-## hosigraph が Datalevin を使うための設定
+## Config keys
 
-```elixir
-config :my_app, MyApp.Repo,
-  dir: "/var/lib/my_app/hosi",
-  schemas: [...],
-  open: %{config: %{khana: [:dtlv, "/opt/datalevin/dtlv"]}}
-  # JVM 常駐なら: open: %{config: %{khana: [:jvm, "java", "/opt/datalevin/datalevin-1.2.10-standalone.jar"]}}
-```
+`:dir` (hosigraph directory), `:schemas`, `:open` (extra open options, e.g. Datalevin), `:precheck_unique`
+(default `true`), `:hosi` (module that talks to hosigraph, default `Hosi`).
 
-Repo の起動時に、アダプターが VM の `SIGCHLD` を既定に戻します(VM 全体の設定です)。BEAM は `SIGCHLD` を無視して起動するので、
-中の Haskell が `dtlv` / `java` の終了を待てず `waitForProcess: does not exist (No child processes)` になるためです。
+## Testing your app
 
-## 設定
+`config :my_app, MyApp.Repo, hosi: Ecto.Hosi.Fake` runs the Repo in memory with no libhosi or Datalevin.
+It is only a stand-in and once accepted things the real engine rejected, so test important paths against
+the real one too.
 
-| キー | 意味 |
-|---|---|
-| `:dir` | hosigraph のディレクトリ(`mix ecto.create` / `ecto.drop` でも使う) |
-| `:schemas` | hosigraph に置く Ecto スキーマ |
-| `:open` | hosigraph を開くときの追加オプション |
-| `:precheck_unique` | 既定 `true`。`hosi_unique` の値が使われていないか、書く前に問い合わせる |
-| `:hosi` | hosigraph と話すモジュール(既定 `Hosi`)。アプリのテストでは `hosi: Ecto.Hosi.Fake` にすると、libhosi なしでメモリ上で動く |
-
-## テスト
+## Development
 
 ```sh
-HOSI_BUILD=none mix test      # libhosi なしで動く(メモリ上の替え玉 Ecto.Hosi.Fake を使う。Fake はこのパッケージに入っています)
-
-# 本物の hosigraph + Datalevin に向ける(上のルールの口のパッチを当てた hosigraph で)
-HOSI_PATH=/path/to/hosigraph/hosigraph-ex HOSI_DTLV=/path/to/dtlv HOSI_REAL=1 mix test
+HOSI_BUILD=none mix test      # stand-in, 53 tests
+HOSI_REAL=1 HOSI_PATH=<hosigraph>/hosigraph-ex HOSI_BUILD=source HOSI_JAR=<datalevin.jar> mix test   # real, 52 tests
 ```
 
-53 テスト。替え玉は「hosigraph の約束どおり」に作ってあります(`temps`、`when:`、`[:ref, id]`、型チェック、`%` なしのルール呼び出しの拒否、Datalevin の unique のエラー文)。
-`HOSI_REAL=1` では、各テストが新しいディレクトリで本物を開きます(1本あたり約0.5秒。替え玉の中身を見る1本だけ除きます)。
-**替え玉が通ることと、本物が通ることは別でした:** 替え玉は、頭の変数名が節ごとに違う再帰ルールも、順番つきの答えも、通してしまっていました。本物で試して直したものです。
-
-## 確かめたこと・確かめていないこと
-
-確かめた(動かした):
-* **本物の hosigraph(ソースからビルド)+ Datalevin 1.2.10(ネイティブ `dtlv`)で、このアダプターのテスト 52 本が通る**(失敗 0)。
-  `insert` `update`(楽観ロック) `delete` `insert_all` `preload` `unique_constraint`、`where` の各種、`history` `highest` `erase`、`write_batch` の原子性、
-  そして**再帰ルール(循環つき)・`not` つきルール・比較つきルール**。
-* hosigraph 自身のテストが 147 本通る(ルールの口のテスト1本を足したもの)。
-* Ecto 3.15.0-dev(master)でコンパイルでき、警告なし。
-
-確かめていない:
-* ルールの口は、**hosigraph に私が足したパッチ**の上でだけ動いています。hosigraph 本体にはまだありません。
-* ビルドは **GHC 9.4.7**(aptのもの)で行いました。README の GHC 9.10.3 では動かしていません(そちらには、互換パッチは不要なはずです)。
-* Datalevin の JVM 常駐モードでの、このアダプターのテスト。(hosigraph 自身のテストは、JVM で 20 シナリオが通りましたが、時間切れで全部は回っていません。)
-* macOS、Ecto 3.12〜3.14。
-* 大きなデータ。テストは数行〜数十行の世界です。`order_by` / `limit` は、一致した行を全部読んでから Elixir 側で行います(`highest` が近道です)。
+(`HOSI_DTLV=<dtlv>` instead of `HOSI_JAR`. `HOSI_PATH` swaps the git dependency for your checkout.)
+Verified on the real engine: GHC 9.10.3, Datalevin 1.2.10 as a JVM, Ecto 3.14.3. Not verified: macOS,
+Ecto 3.12/3.13, large data.

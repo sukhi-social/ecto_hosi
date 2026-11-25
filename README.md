@@ -4,7 +4,7 @@ An [Ecto](https://hex.pm/packages/ecto) adapter for [hosigraph](https://github.c
 a database where an append-only event log is the truth and "now" is a Datalevin (Datalog) copy folded from it.
 
 You keep `Repo`, schemas, changesets and `preload`, and you also get **Datalog with recursive rules**,
-the **history** of any row, and **real erasure**. It has no SQL, joins, transactions or migrations.
+the **history** of any row, and **real erasure**. It has no SQL, joins or migrations, and its transactions are not SQL's (below).
 日本語: [README.ja.md](README.ja.md)
 
 > 0.1, not on Hex. Tested on Linux aarch64 only.
@@ -55,15 +55,24 @@ Add the Repo to your supervision tree. Rows are stored as facts (`[1 :"user/name
 hosigraph schema is derived from your Ecto schemas at start-up.
 
 **Works as in Ecto:** `insert` `update` (+`optimistic_lock`) `delete` `insert_all` `get` `get_by` `all` `one`
-`exists?` `aggregate(:count)` `preload`, `unique_constraint`. Queries cover one schema: `where`
+`exists?` `aggregate(:count)` `preload`, `unique_constraint`, `update_all` and `delete_all` (one schema, the same
+`where`; `set:` and `inc:`, no `select`), `insert`/`insert_all` with `on_conflict` (`:nothing`, `{:replace, ..}`,
+`:replace_all`, `:replace_all_except`, `[set: .., inc: ..]`) and `conflict_target: [fields]`, and `Repo.transaction`/`rollback`/`Ecto.Multi`. Queries cover one schema: `where`
 (`== != < <= > >= in is_nil not and or`), `order_by`, `limit`, `offset`, field `select`. Anything else raises
 and points to `Repo.datalog/1`.
 
 **Different:**
 * `:map`, `{:array, _}` and `:binary` fields are kept as text (JSON, JSON, Base64): they read back and match with `==` as a whole, but cannot be queried inside.
-* No transactions. Use `Repo.write_batch/2` for all-or-nothing writes.
+* **Transactions run their writes at once and undo them on rollback.** hosigraph writes one batch atomically and has no
+  begin/commit around many steps. A rollback (`Repo.rollback/1`, a failing `Multi` step, an exception) writes the old values
+  back: rows made in it are removed, changed or deleted rows are restored. So: other processes see the writes before the
+  commit, a crash between the writes loses the rollback, the undone writes stay in `Repo.history/1`, and `erase` is not undone.
+  Use `Repo.write_batch/2` where you need one atomic write.
+* `on_conflict` looks the existing row up by `conflict_target` and then writes: put the target on a `hosi_unique` field and
+  hosigraph's own `unique` guards the race. `{:unsafe_fragment, ..}` and `{:constraint, ..}` targets, and an `on_conflict`
+  query with a `where`, raise. `:nothing` also skips a taken `hosi_unique` value.
 * `not` means "no such fact": `where: not (u.age > 30)` also returns rows with no age.
-* No `update_all`, `delete_all`, `stream`. `order_by`/`limit` cut in Elixir; use `Repo.highest/4` for "newest N".
+* No `stream`. `order_by`/`limit` cut in Elixir; use `Repo.highest/4` for "newest N".
 
 **Added to your Repo:**
 

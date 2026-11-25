@@ -11,14 +11,35 @@ defmodule Ecto.Hosi.Reader do
   @cmp_text %{==: "=", !=: "not=", <: "<", <=: "<=", >: ">", >=: ">="}
   @flip %{==: :==, !=: :!=, <: :>, <=: :>=, >: :<, >=: :<=}
 
+  @doc """
+  The ids the `where` of a query may match, for `update_all`/`delete_all`: `{source, schema, ids}`.
+  Only a candidate list: the caller reads the entities and checks the marker.
+  """
+  def candidate_ids(meta, %Ecto.Query{} = query, params) do
+    check_supported!(query)
+    {source, schema} = source!(query)
+    expr = where_expr(query)
+
+    ids =
+      case direct_ids(expr, params) do
+        {:ok, ids} -> ids
+        :error -> datalog_ids(meta, Attr.marker(source), source, expr, params)
+      end
+
+    {source, schema, ids}
+  end
+
+  defp source!(query) do
+    case query.from.source do
+      {source, schema} when is_binary(source) and not is_nil(schema) -> {source, schema}
+      _ -> unsupported("a query without a schema", "name the schema: from u in MyApp.User")
+    end
+  end
+
   def all(meta, %Ecto.Query{} = query, params) do
     check_supported!(query)
 
-    {source, schema} =
-      case query.from.source do
-        {source, schema} when is_binary(source) and not is_nil(schema) -> {source, schema}
-        _ -> unsupported("a query without a schema", "name the schema: from u in MyApp.User")
-      end
+    {source, schema} = source!(query)
 
     fields = Enum.map(query.select.fields, &select_field/1)
     expr = where_expr(query)

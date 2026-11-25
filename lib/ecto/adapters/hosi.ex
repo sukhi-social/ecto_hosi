@@ -74,8 +74,9 @@ defmodule Ecto.Adapters.Hosi do
   @behaviour Ecto.Adapter.Schema
   @behaviour Ecto.Adapter.Queryable
   @behaviour Ecto.Adapter.Storage
+  @behaviour Ecto.Adapter.Transaction
 
-  alias Ecto.Hosi.{Attr, Backend, Reader, Schema, Types}
+  alias Ecto.Hosi.{Attr, Backend, Bulk, Conflict, Reader, Schema, Tx, Types}
 
   ## ------------------------------------------------------------ Ecto.Adapter
 
@@ -163,17 +164,17 @@ defmodule Ecto.Adapters.Hosi do
   ## ------------------------------------------------------------ Ecto.Adapter.Queryable
 
   @impl Ecto.Adapter.Queryable
-  def prepare(:all, query), do: {:nocache, query}
-
-  def prepare(op, _query) do
-    raise ArgumentError,
-          "Ecto.Adapters.Hosi does not support #{op}; hosigraph keeps history, " <>
-            "so change rows with update/delete (or Repo.write_batch/2)"
-  end
+  def prepare(op, query) when op in [:all, :update_all, :delete_all], do: {:nocache, {op, query}}
 
   @impl Ecto.Adapter.Queryable
-  def execute(meta, _query_meta, {:nocache, query}, params, _opts),
+  def execute(meta, _query_meta, {:nocache, {:all, query}}, params, _opts),
     do: Reader.all(meta, query, params)
+
+  def execute(meta, _query_meta, {:nocache, {:update_all, query}}, params, _opts),
+    do: Bulk.update_all(meta, query, params)
+
+  def execute(meta, _query_meta, {:nocache, {:delete_all, query}}, params, _opts),
+    do: Bulk.delete_all(meta, query, params)
 
   @impl Ecto.Adapter.Queryable
   def stream(_meta, _query_meta, _query, _params, _opts) do
@@ -189,8 +190,35 @@ defmodule Ecto.Adapters.Hosi do
 
   @impl Ecto.Adapter.Schema
   def insert(meta, %{source: source}, fields, on_conflict, returning, _opts) do
-    check_on_conflict!(on_conflict)
+    Conflict.check!(on_conflict)
     attrs = field_attrs(source, fields)
+
+    case Conflict.find(meta, source, attrs, on_conflict) do
+      {:conflict, id} -> upsert_existing(meta, source, id, attrs, on_conflict, returning)
+      :none -> insert_new(meta, source, attrs, on_conflict, returning)
+    end
+  end
+
+  defp upsert_existing(meta, source, id, attrs, on_conflict, returning) do
+    if Conflict.nothing?(on_conflict) do
+      {:ok, []}
+    else
+      entity = read_entity(meta, id)
+      {ops, conds} = Conflict.ops(meta, source, id, entity, attrs, on_conflict)
+
+      write_guarded(
+        meta,
+        ops,
+        conds,
+        fn -> returning_values(meta, source, id, returning) end,
+        attrs
+      )
+    end
+  end
+
+  # `on_conflict: :nothing` treats a unique violation as "nothing to do".
+  defp insert_new(meta, source, attrs, on_conflict, returning) do
+    nothing? = Conflict.nothing?(on_conflict)
 
     case check_unique(meta, attrs, nil) do
       [] ->
@@ -203,14 +231,14 @@ defmodule Ecto.Adapters.Hosi do
             {:ok, returning_values(meta, source, Backend.temp_id(report, 1), returning)}
 
           {:error, {_, :"write-rejected", msg}} ->
-            {:invalid, rejected(attrs, meta, msg)}
+            if nothing?, do: {:ok, []}, else: {:invalid, rejected(attrs, meta, msg)}
 
           {:error, reason} ->
             raise Ecto.Hosi.Error, reason: reason
         end
 
       violations ->
-        {:invalid, violations}
+        if nothing?, do: {:ok, []}, else: {:invalid, violations}
     end
   end
 
@@ -225,7 +253,7 @@ defmodule Ecto.Adapters.Hosi do
         placeholders,
         _opts
       ) do
-    check_on_conflict!(on_conflict)
+    Conflict.check!(on_conflict)
 
     unless placeholders in [nil, []] do
       raise ArgumentError, "Ecto.Adapters.Hosi does not support insert_all placeholders"
@@ -237,13 +265,18 @@ defmodule Ecto.Adapters.Hosi do
       raise ArgumentError, "Ecto.Adapters.Hosi insert_all takes plain values only"
     end
 
+    if Conflict.raise?(on_conflict) do
+      insert_all_plain(meta, source, rows_attrs, returning)
+    else
+      insert_all_conflict(meta, source, rows_attrs, on_conflict, returning)
+    end
+  end
+
+  defp insert_all_plain(meta, source, rows_attrs, returning) do
     ops =
       rows_attrs
       |> Enum.with_index(1)
-      |> Enum.flat_map(fn {attrs, n} ->
-        [[:create, [:tmp, n], Attr.marker(source), true]] ++
-          for({attr, v} <- attrs, do: [:create, [:tmp, n], attr, Backend.wrap(meta, attr, v)])
-      end)
+      |> Enum.flat_map(fn {attrs, n} -> create_ops(meta, source, attrs, n) end)
 
     if ops == [] do
       {0, nil}
@@ -261,6 +294,97 @@ defmodule Ecto.Adapters.Hosi do
       end
     end
   end
+
+  defp create_ops(meta, source, attrs, n) do
+    [[:create, [:tmp, n], Attr.marker(source), true]] ++
+      for({attr, v} <- attrs, do: [:create, [:tmp, n], attr, Backend.wrap(meta, attr, v)])
+  end
+
+  # insert_all with on_conflict: each row is new, or collides with an existing row (the action
+  # applies to it), or is skipped. One write for all of it.
+  defp insert_all_conflict(meta, source, rows_attrs, on_conflict, returning) do
+    nothing? = Conflict.nothing?(on_conflict)
+
+    {actions, _seen} =
+      Enum.map_reduce(rows_attrs, %{}, fn attrs, seen ->
+        key = Conflict.key(source, attrs, on_conflict)
+
+        if key && Map.has_key?(seen, key) do
+          if nothing? do
+            {:skip, seen}
+          else
+            raise ArgumentError,
+                  "Ecto.Adapters.Hosi: on_conflict cannot affect a row a second time " <>
+                    "(two rows of the insert_all have the same conflict_target)"
+          end
+        else
+          seen = if key, do: Map.put(seen, key, true), else: seen
+
+          case Conflict.find(meta, source, attrs, on_conflict) do
+            {:conflict, id} when nothing? -> {{:skip, id}, seen}
+            {:conflict, id} -> {{:old, id, attrs}, seen}
+            :none -> {planned_new(meta, attrs, on_conflict), seen}
+          end
+        end
+      end)
+
+    olds = for {:old, id, _} <- actions, do: id
+
+    entities =
+      if olds == [],
+        do: %{},
+        else: meta |> Backend.get_entities(olds) |> Backend.ok!() |> then(&Map.new(Enum.zip(olds, &1)))
+
+    {ops, conds, ids, _n} =
+      Enum.reduce(actions, {[], [], [], 0}, fn
+        {:skip, _}, acc ->
+          acc
+
+        :skip, acc ->
+          acc
+
+        {:new, attrs}, {ops, conds, ids, n} ->
+          n = n + 1
+          {ops ++ create_ops(meta, source, attrs, n), conds, ids ++ [{:new, n}], n}
+
+        {:old, id, attrs}, {ops, conds, ids, n} ->
+          {o, c} = Conflict.ops(meta, source, id, Map.fetch!(entities, id), attrs, on_conflict)
+          {ops ++ o, conds ++ c, ids ++ [{:old, id}], n}
+      end)
+
+    if ids == [] do
+      {0, nil}
+    else
+      opts = if conds == [], do: [], else: [when: conds]
+
+      case Backend.write(meta, ops, opts) do
+        {:ok, report} ->
+          real =
+            Enum.map(ids, fn
+              {:new, n} -> Backend.temp_id(report, n)
+              {:old, id} -> id
+            end)
+
+          {length(real), insert_all_returning(meta, source, real, returning)}
+
+        {:error, {_, :conflict, _}} ->
+          raise Ecto.Hosi.Error, message: "a row changed while insert_all ran; try again"
+
+        {:error, {_, :"write-rejected", msg}} ->
+          raise Ecto.Hosi.Error, message: "insert_all was rejected: " <> msg
+
+        {:error, reason} ->
+          raise Ecto.Hosi.Error, reason: reason
+      end
+    end
+  end
+
+  # A row with no target under `:nothing` is skipped when it would break a unique value.
+  defp planned_new(meta, attrs, {:nothing, _, []}) do
+    if check_unique(meta, attrs, nil) == [], do: {:new, attrs}, else: :skip
+  end
+
+  defp planned_new(_meta, attrs, _on_conflict), do: {:new, attrs}
 
   @impl Ecto.Adapter.Schema
   def update(meta, %{source: source}, fields, filters, returning, _opts) do
@@ -319,6 +443,18 @@ defmodule Ecto.Adapters.Hosi do
     end
   end
 
+  ## ------------------------------------------------------------ Ecto.Adapter.Transaction
+  # Not SQL transactions; see Ecto.Hosi.Tx for what they are and are not.
+
+  @impl Ecto.Adapter.Transaction
+  def transaction(meta, _opts, fun), do: Tx.run(meta, fun)
+
+  @impl Ecto.Adapter.Transaction
+  def in_transaction?(meta), do: Tx.active?(meta)
+
+  @impl Ecto.Adapter.Transaction
+  def rollback(meta, value), do: Tx.rollback(meta, value)
+
   ## ------------------------------------------------------------ Ecto.Adapter.Storage
 
   @impl Ecto.Adapter.Storage
@@ -360,13 +496,6 @@ defmodule Ecto.Adapters.Hosi do
   # processes)"). Restoring the default makes the wait work. It is a setting of the whole VM.
   defp wait_for_children! do
     :os.set_signal(:sigchld, :default)
-  end
-
-  defp check_on_conflict!({:raise, _, _}), do: :ok
-
-  defp check_on_conflict!(other) do
-    raise ArgumentError,
-          "Ecto.Adapters.Hosi supports only on_conflict: :raise for now, got: #{inspect(other)}"
   end
 
   # [{field, value}] -> [{attr, value}] (nil values are not facts, except when retracting)

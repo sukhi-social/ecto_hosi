@@ -174,11 +174,9 @@ defmodule Ecto.Adapters.HosiTest do
         Repo.all(from(u in User, group_by: u.age, select: u.age))
       end
 
-      assert_raise ArgumentError, ~r/update_all/, fn ->
-        Repo.update_all(User, set: [name: "x"])
+      assert_raise ArgumentError, ~r/select/, fn ->
+        Repo.update_all(from(u in User, select: u.id), set: [name: "x"])
       end
-
-      assert_raise ArgumentError, ~r/delete_all/, fn -> Repo.delete_all(User) end
     end
   end
 

@@ -3,7 +3,16 @@ defmodule Ecto.Hosi.Backend do
   # The one place that talks to hosigraph. The module that answers (`Hosi`, or a test double with
   # the same functions) lives in the adapter meta as `:backend`; the connection as `:conn`.
 
-  def write(meta, ops, opts \\ []), do: meta.backend.write(meta.conn, ops, opts)
+  def write(meta, ops, opts \\ []) do
+    if Ecto.Hosi.Tx.active?(meta) do
+      Ecto.Hosi.Tx.before_write(meta, ops)
+      result = meta.backend.write(meta.conn, ops, opts)
+      with {:ok, report} <- result, do: Ecto.Hosi.Tx.after_write(meta, report)
+      result
+    else
+      meta.backend.write(meta.conn, ops, opts)
+    end
+  end
   def get_entities(meta, ids), do: meta.backend.get_entities(meta.conn, ids)
 
   @doc "One query; the rows of its answer."

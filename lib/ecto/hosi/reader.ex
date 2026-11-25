@@ -31,12 +31,33 @@ defmodule Ecto.Hosi.Reader do
 
   defp source!(query) do
     case query.from.source do
-      {source, schema} when is_binary(source) and not is_nil(schema) -> {source, schema}
-      _ -> unsupported("a query without a schema", "name the schema: from u in MyApp.User")
+      {source, schema} when is_binary(source) -> {source, schema}
+      _ -> unsupported("this query source", "name a schema or a table: from u in MyApp.User")
     end
   end
 
   def all(meta, %Ecto.Query{} = query, params) do
+    if legacy_ok?(query, params),
+      do: one_schema(meta, query, params),
+      else: Ecto.Hosi.Hybrid.all(meta, query, params)
+  end
+
+  # The one-schema path answers exactly what Datalog can say; anything else (a join, group_by,
+  # an aggregate, a fragment, like, ...) goes to the hybrid path.
+  defp legacy_ok?(query, params) do
+    check_supported!(query)
+    {source, _schema} = source!(query)
+    st = %{n: 0, inputs: [], params: params}
+    expr = where_expr(query)
+    if expr, do: comp(expr, source, st)
+    Enum.each(query.select.fields, &select_field/1)
+    order_keys(query)
+    true
+  rescue
+    _ in [ArgumentError, MatchError, FunctionClauseError] -> false
+  end
+
+  defp one_schema(meta, query, params) do
     check_supported!(query)
 
     {source, schema} = source!(query)

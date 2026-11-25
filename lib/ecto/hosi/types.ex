@@ -156,6 +156,9 @@ defmodule Ecto.Hosi.Types do
   defp load_time(s) when is_binary(s), do: Time.from_iso8601(s)
   defp load_time(_), do: :error
   defp load_decimal(s) when is_binary(s), do: {:ok, Decimal.new(s)}
+  defp load_decimal(%Decimal{} = d), do: {:ok, d}
+  defp load_decimal(n) when is_integer(n), do: {:ok, Decimal.new(n)}
+  defp load_decimal(n) when is_float(n), do: {:ok, Decimal.from_float(n)}
   defp load_decimal(_), do: :error
   defp load_float(n) when is_integer(n), do: {:ok, n * 1.0}
   defp load_float(n) when is_float(n), do: {:ok, n}

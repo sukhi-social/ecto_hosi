@@ -61,6 +61,8 @@ hosigraph schema is derived from your Ecto schemas at start-up.
 (`== != < <= > >= in is_nil not and or`), `order_by`, `limit`, `offset`, field `select`. Anything else raises
 and points to `Repo.datalog/1`.
 
+**Joins and more, the way Datalog likes them.** `join`/`left_join`/`cross_join`, `group_by`, `having`, aggregates (`count` `sum` `min` `max` `avg`, `filter`, `distinct`), `distinct`, `like`/`ilike`, `coalesce`, schemaless `from "table"`, and the fragments `lower(?)` `upper(?)` `length(?)` `? LIKE ?` `?->>'k'` `EXISTS (SELECT 1 FROM t a WHERE a.c = ?)` run as a hybrid: the base table and the leading inner joins are ONE Datalog query (a join is a shared variable; what Datalog can say of the `where` is pushed in), a left join reads its table once for the keys it needs, and the whole `where` is checked again in Elixir with SQL's meaning, so the push only has to be a superset. A query with no restricting `where` reads whole tables: write it with `Repo.datalog/1` when that matters. Still unsupported: subqueries, windows, `union`, `lock`, `with_cte`.
+
 **Different:**
 * `:map`, `{:array, _}` and `:binary` fields are kept as text (JSON, JSON, Base64): they read back and match with `==` as a whole, but cannot be queried inside.
 * **A `Multi` of known changesets is ONE atomic write.** `Repo.transaction(multi)` where every step is `Multi.insert/update/delete` with a

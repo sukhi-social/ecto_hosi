@@ -166,12 +166,12 @@ defmodule Ecto.Adapters.HosiTest do
     end
 
     test "what a table-less store cannot do says so" do
-      assert_raise ArgumentError, ~r/joins.*Repo.datalog/s, fn ->
-        Repo.all(from(u in User, join: p in Post, on: p.user_id == u.id))
+      assert_raise ArgumentError, ~r/subquery.*Repo.datalog/s, fn ->
+        Repo.all(from(u in subquery(from(u in User, select: %{id: u.id})), select: u.id))
       end
 
-      assert_raise ArgumentError, ~r/group_by/, fn ->
-        Repo.all(from(u in User, group_by: u.age, select: u.age))
+      assert_raise ArgumentError, ~r/windows.*Repo.datalog/s, fn ->
+        Repo.all(from(u in User, windows: [w: [partition_by: u.age]], select: count(u.id) |> over(:w)))
       end
 
       assert_raise ArgumentError, ~r/select/, fn ->

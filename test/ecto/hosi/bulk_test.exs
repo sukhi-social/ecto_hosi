@@ -79,4 +79,68 @@ defmodule Ecto.Hosi.BulkTest do
       assert Repo.all(User) == []
     end
   end
+
+  describe "returning" do
+    test "update_all returns the rows as they are after the change" do
+      a = user!(%{name: "Ada", age: 1})
+      user!(%{name: "Bob", age: 2})
+
+      assert {1, [[id, "Ada!", 1]]} =
+               Repo.update_all(
+                 from(u in User, where: u.age == 1, select: [u.id, u.name, u.age], update: [set: [name: "Ada!"]]),
+                 []
+               )
+
+      assert id == a.id
+    end
+
+    test "delete_all returns the rows it removed" do
+      a = user!(%{name: "Ada"})
+
+      assert {1, [%{id: id, name: "Ada"}]} =
+               Repo.delete_all(from(u in User, where: u.id == ^a.id, select: %{id: u.id, name: u.name}))
+
+      assert id == a.id
+      assert Repo.get(User, a.id) == nil
+    end
+  end
+
+  describe "schemaless insert_all" do
+    test "dumps times, maps, arrays and binaries by the registered schema" do
+      at = ~U[2026-01-02 03:04:05.000000Z]
+
+      assert {1, _} =
+               Repo.insert_all("doc", [
+                 %{meta: %{"a" => 1}, tags: ["x"], blob: <<1, 2, 255>>}
+               ])
+
+      assert {1, _} = Repo.insert_all("user", [%{name: "N", email: "n@x", inserted_at: at, updated_at: at}])
+      assert %{inserted_at: _} = Repo.one(from(u in User, where: u.name == "N"))
+      assert [%{meta: %{"a" => 1}, tags: ["x"], blob: <<1, 2, 255>>}] = Repo.all(Doc)
+    end
+  end
+
+  describe "EXISTS fragments" do
+    test "EXISTS and NOT EXISTS look at another table" do
+      a = user!(%{name: "Ada"})
+      b = user!(%{name: "Bob"})
+      Repo.insert!(%Post{title: "t", user_id: a.id})
+
+      with_posts =
+        from(u in User,
+          where: fragment("EXISTS (SELECT 1 FROM post p WHERE p.user_id = ?)", u.id),
+          select: u.name
+        )
+
+      without =
+        from(u in User,
+          where: fragment("NOT EXISTS (SELECT 1 FROM post p WHERE p.user_id = ?)", u.id),
+          select: u.name
+        )
+
+      assert Repo.all(with_posts) == ["Ada"]
+      assert Repo.all(without) == ["Bob"]
+      assert b.id
+    end
+  end
 end

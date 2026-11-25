@@ -145,6 +145,7 @@ defmodule Ecto.Adapters.Hosi do
       backend: backend,
       conn: name,
       attrs: attrs,
+      schemas: Map.new(Keyword.get(config, :schemas, []), &{&1.__schema__(:source), &1}),
       precheck_unique: Keyword.get(config, :precheck_unique, true)
     }
 
@@ -247,7 +248,7 @@ defmodule Ecto.Adapters.Hosi do
   @impl Ecto.Adapter.Schema
   def insert_all(
         meta,
-        %{source: source},
+        %{source: source, schema: schema},
         _header,
         rows,
         on_conflict,
@@ -261,6 +262,9 @@ defmodule Ecto.Adapters.Hosi do
       raise ArgumentError, "Ecto.Adapters.Hosi does not support insert_all placeholders"
     end
 
+    # `insert_all("table", rows)` has no schema, so Ecto dumped nothing: dump by the type of the
+    # schema registered for that table (a DateTime, a map, a binary ...).
+    rows = if is_nil(schema), do: Enum.map(rows, &dump_row(meta, source, &1)), else: rows
     rows_attrs = Enum.map(rows, &field_attrs(source, &1))
 
     for attrs <- rows_attrs, v <- Keyword.values(attrs), is_tuple(v) do
@@ -294,6 +298,27 @@ defmodule Ecto.Adapters.Hosi do
         {:error, reason} ->
           raise Ecto.Hosi.Error, reason: reason
       end
+    end
+  end
+
+  defp dump_row(meta, source, row) do
+    case Map.get(meta.schemas, source) do
+      nil ->
+        row
+
+      schema ->
+        fields = schema.__schema__(:fields)
+
+        for {field, value} <- row do
+          if field in fields and not is_nil(value) do
+            case Ecto.Type.adapter_dump(__MODULE__, schema.__schema__(:type, field), value) do
+              {:ok, dumped} -> {field, dumped}
+              :error -> {field, value}
+            end
+          else
+            {field, value}
+          end
+        end
     end
   end
 

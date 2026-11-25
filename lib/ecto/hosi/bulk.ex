@@ -4,11 +4,10 @@ defmodule Ecto.Hosi.Bulk do
   # same `where` as a read, then change them in ONE hosigraph write, guarded so that a row
   # that vanished meanwhile fails the write rather than being resurrected.
 
-  alias Ecto.Hosi.{Attr, Backend, Reader, Update}
+  alias Ecto.Hosi.{Attr, Backend, Eval, Reader, Types, Update}
 
   def update_all(meta, %Ecto.Query{} = query, params) do
-    no_select!(query, "update_all")
-    {source, _schema, rows} = matching(meta, query, params)
+    {source, schema, rows} = matching(meta, query, params)
 
     {ops, conds} =
       Enum.reduce(rows, {[], []}, fn {id, entity}, {ops, conds} ->
@@ -17,12 +16,22 @@ defmodule Ecto.Hosi.Bulk do
       end)
 
     write!(meta, ops, conds)
-    {length(rows), nil}
+
+    # `returning`: the rows as they are after the update
+    after_rows =
+      if query.select && rows != [] do
+        ids = Enum.map(rows, &elem(&1, 0))
+        entities = meta |> Backend.get_entities(ids) |> Backend.ok!()
+        Enum.zip(ids, entities)
+      else
+        rows
+      end
+
+    {length(rows), returned(meta, query, params, source, schema, after_rows)}
   end
 
   def delete_all(meta, %Ecto.Query{} = query, params) do
-    no_select!(query, "delete_all")
-    {source, _schema, rows} = matching(meta, query, params)
+    {source, schema, rows} = matching(meta, query, params)
     marker = Attr.marker(source)
 
     ops =
@@ -32,7 +41,27 @@ defmodule Ecto.Hosi.Bulk do
           do: [:delete, id, attr, Backend.wrap(meta, attr, v)]
 
     write!(meta, ops, for({id, _} <- rows, do: [:holds, id, marker, true]))
-    {length(rows), nil}
+    {length(rows), returned(meta, query, params, source, schema, rows)}
+  end
+
+  # The rows `select`/`returning` asks for, from `[{id, entity}]`; nil when nothing is asked for.
+  defp returned(_meta, %{select: nil}, _params, _source, _schema, _rows), do: nil
+
+  defp returned(meta, %{select: %{fields: fields}}, params, source, schema, rows) do
+    ctx = %{meta: meta, params: params}
+
+    for {id, entity} <- rows do
+      env = %{0 => %{id: id, entity: entity, source: source}}
+
+      for expr <- fields do
+        value = Eval.eval(expr, env, ctx)
+
+        case expr do
+          {{:., _, [{:&, _, [0]}, f]}, _, []} -> Types.read(schema, f, value)
+          _ -> value
+        end
+      end
+    end
   end
 
   # [{id, entity}] of the rows that really are rows of the schema.
@@ -70,12 +99,5 @@ defmodule Ecto.Hosi.Bulk do
       {:error, reason} ->
         raise Ecto.Hosi.Error, reason: reason
     end
-  end
-
-  defp no_select!(%{select: nil}, _what), do: :ok
-
-  defp no_select!(_query, what) do
-    raise ArgumentError,
-          "Ecto.Adapters.Hosi does not support :select / returning in #{what}; read the rows first"
   end
 end

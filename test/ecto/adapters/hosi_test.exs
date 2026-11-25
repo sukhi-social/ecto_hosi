@@ -174,9 +174,6 @@ defmodule Ecto.Adapters.HosiTest do
         Repo.all(from(u in User, windows: [w: [partition_by: u.age]], select: count(u.id) |> over(:w)))
       end
 
-      assert_raise ArgumentError, ~r/select/, fn ->
-        Repo.update_all(from(u in User, select: u.id), set: [name: "x"])
-      end
     end
   end
 

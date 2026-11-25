@@ -81,10 +81,65 @@ defmodule Ecto.Hosi.ConflictTest do
 
       assert is_integer(id)
 
-      assert_raise ArgumentError, ~r/conflict_target: \[fields\]/, fn ->
+      assert_raise ArgumentError, ~r/conflict_target/, fn ->
         Repo.insert(%User{name: "A", email: "b@x"},
           on_conflict: :nothing,
-          conflict_target: {:unsafe_fragment, "(email)"}
+          conflict_target: {:constraint, "user_email_index"}
+        )
+      end
+    end
+  end
+
+  describe "an expression or partial index as the conflict target" do
+    @target {:unsafe_fragment, "(lower(email)) WHERE age IS NULL"}
+
+    test "lower(column): a different case is the same row" do
+      u = %User{name: "A", email: "Ada@X"} |> Repo.insert!()
+
+      assert {:ok, %User{id: id}} =
+               Repo.insert(%User{name: "B", email: "ada@x"},
+                 on_conflict: {:replace, [:name]},
+                 conflict_target: @target
+               )
+
+      assert id == u.id
+      assert Repo.get!(User, u.id).name == "B"
+      assert Repo.aggregate(User, :count) == 1
+    end
+
+    test "a row outside the WHERE is not in the index: it is just inserted" do
+      %User{name: "A", email: "Ada@X"} |> Repo.insert!()
+
+      assert {:ok, %User{id: id}} =
+               Repo.insert(%User{name: "B", email: "ada@x", age: 5},
+                 on_conflict: :nothing,
+                 conflict_target: @target
+               )
+
+      assert is_integer(id)
+      assert Repo.aggregate(User, :count) == 2
+    end
+
+    test "a plain column and an equality, in insert_all too" do
+      target = {:unsafe_fragment, "(name) WHERE active = true"}
+      %User{name: "A", email: "a@x", active: true} |> Repo.insert!()
+
+      assert {1, _} =
+               Repo.insert_all(
+                 User,
+                 [%{name: "A", email: "b@x", active: true}, %{name: "C", email: "c@x", active: true}],
+                 on_conflict: :nothing,
+                 conflict_target: target
+               )
+
+      assert Repo.all(from(u in User, order_by: u.name, select: u.name)) == ["A", "C"]
+    end
+
+    test "what it cannot read says so" do
+      assert_raise ArgumentError, ~r/cannot read the conflict_target/, fn ->
+        Repo.insert(%User{name: "A", email: "x@x"},
+          on_conflict: :nothing,
+          conflict_target: {:unsafe_fragment, "(email) WHERE age > 5"}
         )
       end
     end

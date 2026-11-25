@@ -208,6 +208,9 @@ defmodule Ecto.Hosi.Eval do
     json_text(v, key)
   end
 
+  defp run_fragment("NOT EXISTS (SELECT 1 FROM " <> rest, args, ctx),
+    do: not run_fragment("EXISTS (SELECT 1 FROM " <> rest, args, ctx)
+
   defp run_fragment("EXISTS (SELECT 1 FROM " <> rest, [v], ctx) do
     case Regex.run(~r/\A(\w+) (\w+) WHERE \2\.(\w+) = \?\)\z/, rest) do
       [_, table, _alias, column] -> exists?(ctx.meta, table, column, v)

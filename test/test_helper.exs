@@ -8,8 +8,14 @@ base = [
 config =
   if real? do
     # a real hosigraph with a real Datalevin: HOSI_DTLV=/path/to/dtlv HOSI_REAL=1 mix test
-    dtlv = System.fetch_env!("HOSI_DTLV")
-    base ++ [hosi: Hosi, open: %{config: %{khana: [:dtlv, dtlv]}}]
+    # or, with a JDK 21 and the standalone jar: HOSI_JAR=/path/to/datalevin-standalone.jar HOSI_REAL=1 mix test
+    khana =
+      case System.get_env("HOSI_JAR") do
+        nil -> [:dtlv, System.fetch_env!("HOSI_DTLV")]
+        jar -> [:jvm, System.get_env("HOSI_JAVA", "java"), jar]
+      end
+
+    base ++ [hosi: Hosi, open: %{config: %{khana: khana}}]
   else
     base ++ [hosi: Ecto.Hosi.Fake]
   end

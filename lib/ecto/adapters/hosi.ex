@@ -83,6 +83,8 @@ defmodule Ecto.Adapters.Hosi do
   @impl Ecto.Adapter
   defmacro __before_compile__(_env) do
     quote do
+      use Ecto.Hosi.StaticMulti
+
       @doc "Run a Datalog query (see `Ecto.Hosi.Query.datalog/1`). Returns the rows, a set: in no particular order."
       def datalog(query, opts \\ []), do: Ecto.Hosi.RepoApi.datalog(__MODULE__, query, opts)
 

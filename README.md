@@ -63,6 +63,10 @@ and points to `Repo.datalog/1`.
 
 **Different:**
 * `:map`, `{:array, _}` and `:binary` fields are kept as text (JSON, JSON, Base64): they read back and match with `==` as a whole, but cannot be queried inside.
+* **A `Multi` of known changesets is ONE atomic write.** `Repo.transaction(multi)` where every step is `Multi.insert/update/delete` with a
+  changeset or struct (no function, no `Multi.run`, no options) becomes `Repo.write_batch/2`: all or nothing, crash-safe. The
+  `changes` of a failing step's `{:error, name, value, changes}` is then `%{}` (nothing before it was made). A repo that does not
+  use the adapter directly adds `use Ecto.Hosi.StaticMulti`. Anything else runs as below.
 * **Transactions run their writes at once and undo them on rollback.** hosigraph writes one batch atomically and has no
   begin/commit around many steps. A rollback (`Repo.rollback/1`, a failing `Multi` step, an exception) writes the old values
   back: rows made in it are removed, changed or deleted rows are restored. So: other processes see the writes before the

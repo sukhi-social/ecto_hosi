@@ -75,8 +75,10 @@ defmodule Ecto.Hosi.TransactionTest do
   test "Ecto.Multi: a failing step undoes the earlier ones" do
     user!(%{email: "taken@x"})
 
+    # a Multi.run makes it not static, so it runs step by step and is undone (static ones: StaticMultiTest)
     multi =
       Multi.new()
+      |> Multi.run(:not_static, fn _, _ -> {:ok, 1} end)
       |> Multi.insert(:ok, User.changeset(%User{}, %{name: "fine", email: "fine@x"}))
       |> Multi.insert(:dup, User.changeset(%User{}, %{name: "dup", email: "taken@x"}))
 

@@ -50,6 +50,27 @@ defmodule Ecto.Hosi.Types do
     end
   end
 
+  @doc """
+  A value no type was there to dump (a parameter of a schemaless query, a column the schema types
+  more strictly than the caller does): times, dates, decimals, maps and lists in the form
+  hosigraph keeps them. Anything else is returned as it is.
+  """
+  def raw_dump(%DateTime{} = dt), do: DateTime.to_unix(dt, :microsecond)
+  def raw_dump(%NaiveDateTime{} = n), do: NaiveDateTime.diff(n, @epoch_naive, :microsecond)
+  def raw_dump(%Date{} = d), do: Date.diff(d, @epoch_date)
+  def raw_dump(%Time{} = t), do: Time.to_iso8601(t)
+  def raw_dump(%Decimal{} = d), do: Decimal.to_string(d, :normal)
+  def raw_dump(v) when is_map(v) and not is_struct(v), do: JSON.encode!(v)
+  def raw_dump(v), do: v
+
+  @doc "The parameters of a query with `raw_dump/1` applied (lists element by element)."
+  def normalize_params(params) do
+    Enum.map(params, fn
+      list when is_list(list) -> Enum.map(list, &raw_dump/1)
+      v -> raw_dump(v)
+    end)
+  end
+
   ## ---- the Ecto.Adapter loaders/dumpers callbacks
 
   def dumpers(p, type) when p in [:utc_datetime, :utc_datetime_usec], do: [type, ns(&dump_utc/1)]

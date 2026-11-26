@@ -16,6 +16,7 @@ defmodule Ecto.Hosi.Reader do
   Only a candidate list: the caller reads the entities and checks the marker.
   """
   def candidate_ids(meta, %Ecto.Query{} = query, params) do
+    params = Types.normalize_params(params)
     check_supported!(query)
     {source, schema} = source!(query)
     expr = where_expr(query)
@@ -37,6 +38,8 @@ defmodule Ecto.Hosi.Reader do
   end
 
   def all(meta, %Ecto.Query{} = query, params) do
+    params = Types.normalize_params(params)
+
     if legacy_ok?(query, params),
       do: one_schema(meta, query, params),
       else: Ecto.Hosi.Hybrid.all(meta, query, params)
@@ -276,6 +279,7 @@ defmodule Ecto.Hosi.Reader do
   # --- what an expression stands for
 
   defp classify({{:., _, [{:&, _, [0]}, f]}, _, []}, _params), do: {:field, f}
+  defp classify(%Ecto.Query.Tagged{value: v}, params), do: classify(v, params)
   defp classify({:^, _, [ix]}, params), do: {:value, Enum.at(params, ix)}
   defp classify({:^, _, [ix, len]}, params), do: {:list, Enum.slice(params, ix, len)}
   defp classify(list, _params) when is_list(list), do: {:list, list}

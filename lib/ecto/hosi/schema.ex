@@ -21,8 +21,9 @@ defmodule Ecto.Hosi.Schema do
 
   defmacro __using__(_opts) do
     quote do
-      import Ecto.Hosi.Schema, only: [hosi_unique: 1]
+      import Ecto.Hosi.Schema, only: [hosi_unique: 1, hosi_tuple: 2]
       Module.register_attribute(__MODULE__, :hosi_unique, accumulate: true)
+      Module.register_attribute(__MODULE__, :hosi_tuple, accumulate: true)
       @before_compile Ecto.Hosi.Schema
     end
   end
@@ -34,12 +35,28 @@ defmodule Ecto.Hosi.Schema do
     end
   end
 
+  @doc """
+  Declare a `(key, order)` index that `Repo.highest_in/5` walks: the newest rows of some keys.
+
+      hosi_tuple :account_id, :created_at     # the newest notes of some authors
+
+  `key` has a type (a `belongs_to` key, an integer, a string); `order` must be an integer or a
+  datetime (it is stored as a long). hosigraph keeps the index itself: it is never written.
+  """
+  defmacro hosi_tuple(key, order) do
+    quote do
+      Module.put_attribute(__MODULE__, :hosi_tuple, {unquote(key), unquote(order)})
+    end
+  end
+
   defmacro __before_compile__(env) do
     uniques = env.module |> Module.get_attribute(:hosi_unique) |> List.flatten() |> Enum.uniq()
+    tuples = env.module |> Module.get_attribute(:hosi_tuple) |> Enum.reverse()
 
     quote do
       @doc false
       def __hosi__(:unique), do: unquote(uniques)
+      def __hosi__(:tuples), do: unquote(Macro.escape(tuples))
     end
   end
 
@@ -75,6 +92,13 @@ defmodule Ecto.Hosi.Schema do
         spec = %{type: type}
         spec = if field in uniques, do: Map.put(spec, :unique, :value), else: spec
         {Attr.attr(source, field), spec}
+      end
+
+    tuples = if function_exported?(mod, :__hosi__, 1), do: mod.__hosi__(:tuples), else: []
+
+    fields =
+      for {key, order} <- tuples, into: fields do
+        {Attr.tuple(source, key, order), %{tuple: [Attr.attr(source, key), Attr.attr(source, order)]}}
       end
 
     Map.put(fields, Attr.marker(source), %{type: :boolean})

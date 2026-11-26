@@ -44,4 +44,42 @@ defmodule Ecto.Hosi.RepoApi do
 
     {structs, List.last(places)}
   end
+
+  @doc """
+  The newest rows of some keys, by the `(key, order)` index the schema declares with
+  `hosi_tuple key, order`. Returns places, newest first: `%{id: id, key: key, at: order_value}`,
+  `at` loaded as the order field's type. `after:` is a place from an earlier call (or
+  `%{at: value, id: id}`) and the page starts after it. About one seek per key.
+  """
+  def highest_in(repo, schema, {key, order}, keys, limit, opts) do
+    meta = meta(repo)
+    source = schema.__schema__(:source)
+    attr = Attr.tuple(source, key, order)
+    key_type = schema.__schema__(:type, key)
+    order_type = schema.__schema__(:type, order)
+
+    keys = Enum.map(keys, &dump1(key_type, &1))
+
+    opts =
+      case opts[:after] do
+        nil -> []
+        %{at: at, id: id} -> [after: %{val: dump1(order_type, at), id: id}]
+      end
+
+    places = meta.backend.highest_in(meta.conn, attr, keys, limit, opts) |> Backend.ok!()
+
+    for %{key: k, val: v, id: id} <- places do
+      %{id: id, key: load1(key_type, k), at: load1(order_type, v)}
+    end
+  end
+
+  defp dump1(type, v) do
+    {:ok, d} = Ecto.Type.adapter_dump(Ecto.Adapters.Hosi, type, v)
+    d
+  end
+
+  defp load1(type, v) do
+    {:ok, l} = Ecto.Type.adapter_load(Ecto.Adapters.Hosi, type, v)
+    l
+  end
 end

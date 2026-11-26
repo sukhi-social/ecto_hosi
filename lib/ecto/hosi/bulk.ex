@@ -7,6 +7,7 @@ defmodule Ecto.Hosi.Bulk do
   alias Ecto.Hosi.{Attr, Backend, Eval, Reader, Types, Update}
 
   def update_all(meta, %Ecto.Query{} = query, params) do
+    params = Types.normalize_params(params)
     {source, schema, rows} = matching(meta, query, params)
 
     {ops, conds} =
@@ -31,6 +32,7 @@ defmodule Ecto.Hosi.Bulk do
   end
 
   def delete_all(meta, %Ecto.Query{} = query, params) do
+    params = Types.normalize_params(params)
     {source, schema, rows} = matching(meta, query, params)
     marker = Attr.marker(source)
 

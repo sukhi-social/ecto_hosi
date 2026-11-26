@@ -120,6 +120,35 @@ defmodule Ecto.Hosi.BulkTest do
     end
   end
 
+  describe "schemaless insert_all defaults" do
+    test "a field the row leaves out gets the schema's default" do
+      assert {1, _} = Repo.insert_all("user", [%{name: "D", email: "d@x"}])
+      assert %{active: true, lock_version: 1} = Repo.one(from(u in User, where: u.name == "D"))
+    end
+  end
+
+  describe "values with no type to dump them" do
+    test "a time in a schemaless query, and a time without microseconds in a _usec column" do
+      at = ~N[2026-01-02 03:04:05]
+      assert {1, _} = Repo.insert_all("user", [%{name: "T", email: "t@x", inserted_at: at, updated_at: ~U[2026-01-02 03:04:05Z]}])
+
+      assert ["T"] ==
+               Repo.all(from(u in "user", where: u.inserted_at <= ^~N[2026-01-02 03:04:05.000000], select: u.name))
+
+      assert [] == Repo.all(from(u in "user", where: u.inserted_at < ^~N[2026-01-02 03:04:05], select: u.name))
+    end
+  end
+
+  describe "type/2 in a where" do
+    test "a tagged parameter is read as its value" do
+      a = user!(%{name: "Tg", age: 3})
+      n = 3
+
+      assert [a.id] ==
+               Repo.all(from(u in User, where: u.age == type(^n, :integer), select: u.id))
+    end
+  end
+
   describe "EXISTS fragments" do
     test "EXISTS and NOT EXISTS look at another table" do
       a = user!(%{name: "Ada"})

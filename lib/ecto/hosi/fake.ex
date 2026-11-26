@@ -21,6 +21,9 @@ defmodule Ecto.Hosi.Fake do
   def get_entities(conn, ids), do: GenServer.call(conn, {:get_entities, ids})
   def query_many(conn, queries), do: GenServer.call(conn, {:query_many, queries})
 
+  def highest_in(conn, attr, keys, limit, opts \\ []),
+    do: GenServer.call(conn, {:highest_in, attr, keys, limit, opts})
+
   def highest(conn, attr, limit, opts \\ []),
     do: GenServer.call(conn, {:highest, attr, limit, opts})
 
@@ -71,6 +74,25 @@ defmodule Ecto.Hosi.Fake do
   def handle_call({:highest, attr, limit, opts}, _from, st) do
     places =
       for {{id, ^attr}, vals} <- st.facts, v <- vals, do: %{val: v, id: id}
+
+    places = Enum.sort_by(places, &{&1.val, &1.id}, :desc)
+
+    places =
+      case opts[:after] do
+        nil -> places
+        %{val: v, id: i} -> Enum.filter(places, &({&1.val, &1.id} < {v, i}))
+      end
+
+    {:reply, {:ok, Enum.take(places, limit)}, st}
+  end
+
+  def handle_call({:highest_in, attr, keys, limit, opts}, _from, st) do
+    %{tuple: [ka, oa]} = Map.fetch!(st.schema, attr)
+
+    places =
+      for {{id, ^ka}, [k | _]} <- st.facts, k in keys, {{^id, ^oa}, [v | _]} <- [{{id, oa}, Map.get(st.facts, {id, oa}, [])}] ,
+          v != nil,
+          do: %{key: k, val: v, id: id}
 
     places = Enum.sort_by(places, &{&1.val, &1.id}, :desc)
 

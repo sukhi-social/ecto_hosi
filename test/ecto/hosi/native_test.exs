@@ -23,6 +23,24 @@ defmodule Ecto.Hosi.NativeTest do
       assert Enum.map(next, & &1.title) == ["a", "c"]
     end
 
+    test "highest_in walks the newest rows of some keys" do
+      a = Repo.insert!(%User{name: "A", email: "a@y"})
+      b = Repo.insert!(%User{name: "B", email: "b@y"})
+      c = Repo.insert!(%User{name: "C", email: "c@y"})
+      t = fn n -> DateTime.add(~U[2026-01-01 00:00:00.000000Z], n, :second) end
+
+      for {u, title, n} <- [{a, "a1", 1}, {b, "b2", 2}, {a, "a3", 3}, {c, "c4", 4}, {b, "b5", 5}] do
+        Repo.insert!(%Post{title: title, user_id: u.id, inserted_at: t.(n), updated_at: t.(n)})
+      end
+
+      page = Repo.highest_in(Post, {:user_id, :inserted_at}, [a.id, b.id], 3)
+      assert Enum.map(page, & &1.key) == [b.id, a.id, b.id]
+      assert Enum.map(page, & &1.at) == [t.(5), t.(3), t.(2)]
+
+      next = Repo.highest_in(Post, {:user_id, :inserted_at}, [a.id, b.id], 3, after: List.last(page))
+      assert Enum.map(next, & &1.at) == [t.(1)]
+    end
+
     test "erase removes the entity" do
       user = Repo.insert!(%User{name: "Gone", email: "g@x"})
       Repo.erase([[:ids, [user.id]]])

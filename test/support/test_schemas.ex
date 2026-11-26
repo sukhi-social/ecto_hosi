@@ -32,7 +32,10 @@ end
 
 defmodule Ecto.Hosi.Test.Post do
   use Ecto.Schema
+  use Ecto.Hosi.Schema
   import Ecto.Changeset
+
+  hosi_tuple :user_id, :inserted_at
 
   schema "post" do
     field(:title, :string)

@@ -12,6 +12,9 @@ defmodule Ecto.Hosi.Attr do
   @doc "The attribute of `field` in the schema whose source is `source`."
   def attr(source, field), do: String.to_atom("#{source}/#{field}")
 
+  @doc "The `(key, order)` index attribute: `:\"note/account_id+created_at\"`."
+  def tuple(source, key, order), do: String.to_atom("#{source}/#{key}+#{order}")
+
   @doc "The marker attribute that says an entity is a row of `source`."
   def marker(source), do: attr(source, @kind)
 

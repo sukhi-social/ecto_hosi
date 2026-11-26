@@ -280,6 +280,7 @@ defmodule Ecto.Hosi.Hybrid do
   end
 
   defp classify({{:., _, [{:&, _, [ix]}, f]}, _, []}, _st), do: {:field, ix, f}
+  defp classify(%Ecto.Query.Tagged{value: v}, st), do: classify(v, st)
   defp classify({:^, _, [ix]}, st), do: {:value, Enum.at(st.params, ix)}
   defp classify({:^, _, [ix, len]}, st), do: {:list, Enum.slice(st.params, ix, len)}
   defp classify(list, _st) when is_list(list), do: {:list, list}

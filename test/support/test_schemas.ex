@@ -126,3 +126,55 @@ defmodule Ecto.Hosi.Test.Pair do
     |> unique_constraint(:email, name: :pair_local_email_index)
   end
 end
+
+defmodule Ecto.Hosi.Test.Team do
+  use Ecto.Schema
+  schema("team", do: field(:name, :string))
+end
+
+defmodule Ecto.Hosi.Test.Member do
+  use Ecto.Schema
+  use Ecto.Hosi.Schema
+  hosi_ref :team_id, to: Ecto.Hosi.Test.Team, on_delete: :cascade
+  schema "member" do
+    field(:name, :string)
+    belongs_to(:team, Ecto.Hosi.Test.Team)
+  end
+end
+
+defmodule Ecto.Hosi.Test.Item do
+  use Ecto.Schema
+  use Ecto.Hosi.Schema
+  hosi_ref :member_id, to: "member", on_delete: :cascade
+  schema "item" do
+    field(:name, :string)
+    belongs_to(:member, Ecto.Hosi.Test.Member)
+  end
+end
+
+defmodule Ecto.Hosi.Test.Note do
+  use Ecto.Schema
+  use Ecto.Hosi.Schema
+  hosi_ref :team_id, to: "team", on_delete: :nilify
+  hosi_unique [:team_id, :name], name: "note_team_name_index"
+  schema "note" do
+    field(:name, :string)
+    belongs_to(:team, Ecto.Hosi.Test.Team)
+  end
+end
+
+defmodule Ecto.Hosi.Test.Seat do
+  use Ecto.Schema
+  use Ecto.Hosi.Schema
+  hosi_ref :team_id, to: "team", on_delete: :restrict, name: "seat_team_fk"
+  schema "seat" do
+    belongs_to(:team, Ecto.Hosi.Test.Team)
+  end
+end
+
+defmodule Ecto.Hosi.Test.Entry do
+  use Ecto.Schema
+  use Ecto.Hosi.Schema
+  hosi_append_only()
+  schema "entry", do: field(:text, :string)
+end

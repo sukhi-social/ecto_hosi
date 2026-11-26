@@ -10,6 +10,7 @@ defmodule Ecto.Hosi.Bulk do
     raw = params
     params = Types.normalize_params(params)
     {source, schema, rows} = matching(meta, query, params)
+    Ecto.Hosi.Cascade.append_only!(meta, source)
 
     {ops, conds} =
       Enum.reduce(rows, {[], []}, fn {id, entity}, {ops, conds} ->
@@ -35,11 +36,23 @@ defmodule Ecto.Hosi.Bulk do
   def delete_all(meta, %Ecto.Query{} = query, params) do
     params = Types.normalize_params(params)
     {source, schema, rows} = matching(meta, query, params)
-    marker = Attr.marker(source)
+    Ecto.Hosi.Cascade.append_only!(meta, source)
 
-    ops = for {id, entity} <- rows, op <- Backend.retract_all(meta, id, entity), do: op
+    case rows do
+      [] ->
+        :ok
 
-    write!(meta, ops, for({id, _} <- rows, do: [:holds, id, marker, true]))
+      _ ->
+        case Ecto.Hosi.Cascade.plan(meta, source, rows) do
+          {:ok, ops, conds} ->
+            write!(meta, ops, conds)
+
+          {:restrict, name} ->
+            raise Ecto.Hosi.Error,
+              message: "delete_all on #{source} violates the foreign key #{name}: rows still point at it"
+        end
+    end
+
     {length(rows), returned(meta, query, params, source, schema, rows)}
   end
 

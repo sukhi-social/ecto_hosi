@@ -121,6 +121,7 @@ defmodule Ecto.Hosi.Batch do
     schema = cs.data.__struct__
     source = schema.__schema__(:source)
     id = cs.data.id
+    Ecto.Hosi.Cascade.append_only!(meta, source)
 
     is_integer(id) ||
       raise ArgumentError, "update step #{inspect(step.name)} needs a loaded row with an id"
@@ -184,6 +185,7 @@ defmodule Ecto.Hosi.Batch do
     %{__struct__: schema, id: id} = struct = step.subject
     source = schema.__schema__(:source)
     marker = Attr.marker(source)
+    Ecto.Hosi.Cascade.append_only!(meta, source)
 
     entity =
       case Backend.get_entities(meta, [id]) |> Backend.ok!() do
@@ -193,10 +195,16 @@ defmodule Ecto.Hosi.Batch do
 
     unless Map.has_key?(entity, marker), do: throw({:batch_error, step.name, :stale})
 
+    {ops, conds} =
+      case Ecto.Hosi.Cascade.plan(meta, source, [{id, entity}]) do
+        {:ok, ops, conds} -> {ops, conds}
+        {:restrict, name} -> throw({:batch_error, step.name, {:foreign_key, name}})
+      end
+
     %{
       name: step.name,
-      ops: Backend.retract_all(meta, id, entity),
-      conds: [[:holds, id, marker, true]],
+      ops: ops,
+      conds: conds,
       finish: fn _report -> Ecto.put_meta(struct, state: :deleted) end
     }
   end

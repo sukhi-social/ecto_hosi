@@ -21,10 +21,12 @@ defmodule Ecto.Hosi.Schema do
 
   defmacro __using__(_opts) do
     quote do
-      import Ecto.Hosi.Schema, only: [hosi_unique: 1, hosi_unique: 2, hosi_tuple: 2]
+      import Ecto.Hosi.Schema, only: [hosi_unique: 1, hosi_unique: 2, hosi_tuple: 2, hosi_ref: 2, hosi_append_only: 0]
       Module.register_attribute(__MODULE__, :hosi_unique, accumulate: true)
       Module.register_attribute(__MODULE__, :hosi_uniques, accumulate: true)
       Module.register_attribute(__MODULE__, :hosi_tuple, accumulate: true)
+      Module.register_attribute(__MODULE__, :hosi_ref, accumulate: true)
+      Module.register_attribute(__MODULE__, :hosi_append_only, accumulate: false)
       @before_compile Ecto.Hosi.Schema
     end
   end
@@ -75,16 +77,46 @@ defmodule Ecto.Hosi.Schema do
     end
   end
 
+  @doc """
+  Declare what deleting the row a foreign key points at does to this row (`ON DELETE`):
+
+      hosi_ref :account_id, to: "accounts", on_delete: :cascade
+
+    * `:to` – the parent's table name, or its schema module
+    * `:on_delete` – `:cascade` (delete this row too), `:nilify` (set the key to nil), or
+      `:restrict` / `:none` (refuse the delete; `foreign_key_constraint/3` turns it into an error)
+    * `:name` – the constraint name (default `source_field_fkey`)
+
+  hosigraph has no foreign keys, so the adapter does this on every delete (`Repo.delete`,
+  `delete_all`, a `write_batch` delete step) in the same atomic write as the delete itself.
+  """
+  defmacro hosi_ref(field, opts) do
+    quote do
+      Module.put_attribute(__MODULE__, :hosi_ref, {unquote(field), unquote(opts)})
+    end
+  end
+
+  @doc "Rows of this schema are written once: the adapter refuses to update or delete them."
+  defmacro hosi_append_only do
+    quote do
+      Module.put_attribute(__MODULE__, :hosi_append_only, true)
+    end
+  end
+
   defmacro __before_compile__(env) do
     uniques = env.module |> Module.get_attribute(:hosi_unique) |> List.flatten() |> Enum.uniq()
     tuples = env.module |> Module.get_attribute(:hosi_tuple) |> Enum.reverse()
     uniques_x = env.module |> Module.get_attribute(:hosi_uniques) |> Enum.reverse()
+    refs = env.module |> Module.get_attribute(:hosi_ref) |> Enum.reverse()
+    append_only = Module.get_attribute(env.module, :hosi_append_only) == true
 
     quote do
       @doc false
       def __hosi__(:unique), do: unquote(uniques)
       def __hosi__(:tuples), do: unquote(Macro.escape(tuples))
       def __hosi__(:uniques), do: unquote(Macro.escape(uniques_x))
+      def __hosi__(:refs), do: unquote(Macro.escape(refs))
+      def __hosi__(:append_only), do: unquote(append_only)
     end
   end
 

@@ -152,6 +152,8 @@ defmodule Ecto.Adapters.Hosi do
       conn: name,
       attrs: attrs,
       derived: derived,
+      refs: Ecto.Hosi.Cascade.build(Keyword.get(config, :schemas, [])),
+      append_only: Ecto.Hosi.Cascade.append_only(Keyword.get(config, :schemas, [])),
       names: Ecto.Hosi.Derived.names(derived),
       schemas: Map.new(Keyword.get(config, :schemas, []), &{&1.__schema__(:source), &1}),
       precheck_unique: Keyword.get(config, :precheck_unique, true)
@@ -456,6 +458,7 @@ defmodule Ecto.Adapters.Hosi do
 
   @impl Ecto.Adapter.Schema
   def update(meta, %{source: source}, fields, filters, returning, _opts) do
+    Ecto.Hosi.Cascade.append_only!(meta, source)
     {id, locks} = split_filters(filters)
     marker = Attr.marker(source)
     attrs = field_attrs(source, fields, keep_nil: true)
@@ -499,11 +502,16 @@ defmodule Ecto.Adapters.Hosi do
     marker = Attr.marker(source)
     entity = read_entity(meta, id)
 
-    if Map.has_key?(entity, marker) do
-      ops = Backend.retract_all(meta, id, entity)
+    Ecto.Hosi.Cascade.append_only!(meta, source)
 
-      conds = [[:holds, id, marker, true]] ++ lock_conditions(source, id, locks)
-      write_guarded(meta, ops, conds, fn -> [] end, [])
+    if Map.has_key?(entity, marker) do
+      case Ecto.Hosi.Cascade.plan(meta, source, [{id, entity}]) do
+        {:ok, ops, conds} ->
+          write_guarded(meta, ops, conds ++ lock_conditions(source, id, locks), fn -> [] end, [])
+
+        {:restrict, name} ->
+          {:invalid, [foreign_key: name]}
+      end
     else
       {:error, :stale}
     end

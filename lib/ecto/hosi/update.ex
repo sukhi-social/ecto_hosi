@@ -10,7 +10,9 @@ defmodule Ecto.Hosi.Update do
   @doc """
   `{ops, conds}` that apply `updates` to the row `id`, whose current `entity` was just read.
   """
-  def ops(meta, source, id, entity, updates, params) do
+  def ops(meta, source, id, entity, updates, params, raw \\ nil) do
+    raw = raw || params
+
     changes =
       for %{expr: kinds} <- updates, {kind, kvs} <- kinds, {field, expr} <- kvs do
         {kind, field, expr}
@@ -19,7 +21,7 @@ defmodule Ecto.Hosi.Update do
     sets =
       Enum.map(changes, fn
         {:set, field, expr} ->
-          {Attr.attr(source, field), value(expr, id, entity, source, params)}
+          {Attr.attr(source, field), set_value(expr, id, entity, source, params, raw)}
 
         {:inc, field, expr} ->
           attr = Attr.attr(source, field)
@@ -66,6 +68,17 @@ defmodule Ecto.Hosi.Update do
       end
     end)
   end
+
+  # A list is a value of an array column, stored as JSON text. The `params` have had `raw_dump`
+  # applied element by element (they are also `in ^list` lists), so the list comes from `raw`.
+  defp set_value({:^, _, [ix]} = expr, id, entity, source, params, raw) do
+    case value(expr, id, entity, source, params) do
+      list when is_list(list) -> JSON.encode!(Enum.at(raw, ix))
+      v -> v
+    end
+  end
+
+  defp set_value(expr, id, entity, source, params, _raw), do: value(expr, id, entity, source, params)
 
   defp value({:^, _, [ix]}, _id, _entity, _source, params), do: Enum.at(params, ix)
   defp value(%Ecto.Query.Tagged{value: v}, id, entity, source, params), do: value(v, id, entity, source, params)

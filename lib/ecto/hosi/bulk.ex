@@ -7,12 +7,13 @@ defmodule Ecto.Hosi.Bulk do
   alias Ecto.Hosi.{Attr, Backend, Eval, Reader, Types, Update}
 
   def update_all(meta, %Ecto.Query{} = query, params) do
+    raw = params
     params = Types.normalize_params(params)
     {source, schema, rows} = matching(meta, query, params)
 
     {ops, conds} =
       Enum.reduce(rows, {[], []}, fn {id, entity}, {ops, conds} ->
-        {o, c} = Update.ops(meta, source, id, entity, query.updates, params)
+        {o, c} = Update.ops(meta, source, id, entity, query.updates, params, raw)
         {ops ++ o, conds ++ c}
       end)
 

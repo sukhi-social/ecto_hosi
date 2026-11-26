@@ -56,4 +56,18 @@ defmodule Ecto.Hosi.CompositeTypesTest do
     assert id == doc.id
     assert [] == Repo.all(from d in Doc, where: d.tags == ^["two", "one"])
   end
+
+  test "update_all can set an array or a map column to a list parameter" do
+    doc = doc!()
+    tags = ["x", "y"]
+    items = [%{"k" => 1}]
+
+    {1, _} =
+      Ecto.Query.from(d in Doc, where: d.id == ^doc.id, update: [set: [tags: ^tags, items: ^items]])
+      |> Repo.update_all([])
+
+    got = Repo.get!(Doc, doc.id)
+    assert got.tags == tags
+    assert got.items == items
+  end
 end

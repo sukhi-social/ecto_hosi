@@ -162,7 +162,7 @@ defmodule Ecto.Adapters.Hosi do
 
     child_spec = %{
       id: name,
-      start: {backend, :start_link, [[open: open, name: name]]},
+      start: {Ecto.Hosi.Start, :start_link, [backend, [open: open, name: name], name]},
       type: :worker
     }
 

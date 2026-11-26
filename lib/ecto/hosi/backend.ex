@@ -46,6 +46,17 @@ defmodule Ecto.Hosi.Backend do
     end
   end
 
+  @doc """
+  The ops that retract everything an entity holds. A `(key, order)` tuple attribute (`hosi_tuple`)
+  is kept by hosigraph and is neither written nor retracted, so it is left out.
+  """
+  def retract_all(meta, id, entity) do
+    for {attr, vals} <- entity,
+        not match?(%{^attr => %{tuple: _}}, meta.attrs),
+        v <- vals,
+        do: [:delete, id, attr, wrap(meta, attr, v)]
+  end
+
   @doc "The first value of an attribute in an entity map (every attribute here has one value)."
   def first(entity, attr) do
     case Map.get(entity, attr) do

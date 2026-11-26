@@ -36,11 +36,7 @@ defmodule Ecto.Hosi.Bulk do
     {source, schema, rows} = matching(meta, query, params)
     marker = Attr.marker(source)
 
-    ops =
-      for {id, entity} <- rows,
-          {attr, vals} <- entity,
-          v <- vals,
-          do: [:delete, id, attr, Backend.wrap(meta, attr, v)]
+    ops = for {id, entity} <- rows, op <- Backend.retract_all(meta, id, entity), do: op
 
     write!(meta, ops, for({id, _} <- rows, do: [:holds, id, marker, true]))
     {length(rows), returned(meta, query, params, source, schema, rows)}

@@ -492,10 +492,7 @@ defmodule Ecto.Adapters.Hosi do
     entity = read_entity(meta, id)
 
     if Map.has_key?(entity, marker) do
-      ops =
-        for {attr, vals} <- entity,
-            v <- vals,
-            do: [:delete, id, attr, Backend.wrap(meta, attr, v)]
+      ops = Backend.retract_all(meta, id, entity)
 
       conds = [[:holds, id, marker, true]] ++ lock_conditions(source, id, locks)
       write_guarded(meta, ops, conds, fn -> [] end, [])

@@ -41,6 +41,19 @@ defmodule Ecto.Hosi.NativeTest do
       assert Enum.map(next, & &1.at) == [t.(1)]
     end
 
+    test "a row with a hosi_tuple index can be deleted, bulk-deleted and rolled back" do
+      u = Repo.insert!(%User{name: "T", email: "t@y"})
+      p1 = Repo.insert!(%Post{title: "p1", user_id: u.id})
+      p2 = Repo.insert!(%Post{title: "p2", user_id: u.id})
+      p3 = Repo.insert!(%Post{title: "p3", user_id: u.id})
+
+      assert {:ok, _} = Repo.delete(p1)
+      assert {1, _} = Ecto.Query.from(p in Post, where: p.id == ^p2.id) |> Repo.delete_all()
+
+      assert {:error, :nope} = Repo.transaction(fn -> Repo.delete!(p3) |> then(fn _ -> Repo.rollback(:nope) end) end)
+      assert Repo.get(Post, p3.id)
+    end
+
     test "erase removes the entity" do
       user = Repo.insert!(%User{name: "Gone", email: "g@x"})
       Repo.erase([[:ids, [user.id]]])

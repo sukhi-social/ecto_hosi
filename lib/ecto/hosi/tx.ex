@@ -146,7 +146,10 @@ defmodule Ecto.Hosi.Tx do
 
   # What takes an entity from `now` back to `before`.
   defp diff(meta, id, now, before) do
-    attrs = Enum.uniq(Map.keys(now) ++ Map.keys(before))
+    attrs =
+      (Map.keys(now) ++ Map.keys(before))
+      |> Enum.uniq()
+      |> Enum.reject(&match?(%{tuple: _}, Map.get(meta.attrs, &1)))
 
     Enum.reduce(attrs, {[], []}, fn attr, {del, add} ->
       cur = Map.get(now, attr, [])

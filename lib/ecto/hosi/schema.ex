@@ -21,17 +21,43 @@ defmodule Ecto.Hosi.Schema do
 
   defmacro __using__(_opts) do
     quote do
-      import Ecto.Hosi.Schema, only: [hosi_unique: 1, hosi_tuple: 2]
+      import Ecto.Hosi.Schema, only: [hosi_unique: 1, hosi_unique: 2, hosi_tuple: 2]
       Module.register_attribute(__MODULE__, :hosi_unique, accumulate: true)
+      Module.register_attribute(__MODULE__, :hosi_uniques, accumulate: true)
       Module.register_attribute(__MODULE__, :hosi_tuple, accumulate: true)
       @before_compile Ecto.Hosi.Schema
     end
   end
 
-  @doc "Declare fields (an atom or a list of atoms) whose values hosigraph keeps unique."
-  defmacro hosi_unique(fields) do
+  @doc """
+  Declare a unique rule. A bare field is unique on its own, and hosigraph refuses a second row:
+
+      hosi_unique :email
+
+  A list of two or more fields is unique as a combination (like a composite unique index), and
+  options say the rest of what an index can say:
+
+      hosi_unique [:account_id, :note_id]
+      hosi_unique :username, where: [null: [:domain]], name: "accounts_username_index"
+      hosi_unique :email, lower: [:email], where: [null: [:domain], not_null: [:email]]
+
+    * `:name` – the constraint name `unique_constraint/3` expects (default `source_firstfield_index`)
+    * `:lower` – fields compared lower-cased (`lower(email)`)
+    * `:where` – the rule holds only for rows where `null: [fields]` are nil, `not_null: [fields]` are
+      not, and `eq: [field: value]` are equal (a partial index)
+
+  A row with a nil in one of the fields is never in conflict (SQL's NULLs are distinct). The store
+  keeps a derived attribute for each such rule, so the guard is hosigraph's own, race included.
+  """
+  defmacro hosi_unique(fields, opts \\ []) do
     quote do
-      Module.put_attribute(__MODULE__, :hosi_unique, List.wrap(unquote(fields)))
+      case {unquote(fields), unquote(opts)} do
+        {f, []} when is_atom(f) ->
+          Module.put_attribute(__MODULE__, :hosi_unique, [f])
+
+        {f, o} ->
+          Module.put_attribute(__MODULE__, :hosi_uniques, {List.wrap(f), o})
+      end
     end
   end
 
@@ -52,11 +78,13 @@ defmodule Ecto.Hosi.Schema do
   defmacro __before_compile__(env) do
     uniques = env.module |> Module.get_attribute(:hosi_unique) |> List.flatten() |> Enum.uniq()
     tuples = env.module |> Module.get_attribute(:hosi_tuple) |> Enum.reverse()
+    uniques_x = env.module |> Module.get_attribute(:hosi_uniques) |> Enum.reverse()
 
     quote do
       @doc false
       def __hosi__(:unique), do: unquote(uniques)
       def __hosi__(:tuples), do: unquote(Macro.escape(tuples))
+      def __hosi__(:uniques), do: unquote(Macro.escape(uniques_x))
     end
   end
 
@@ -99,6 +127,11 @@ defmodule Ecto.Hosi.Schema do
     fields =
       for {key, order} <- tuples, into: fields do
         {Attr.tuple(source, key, order), %{tuple: [Attr.attr(source, key), Attr.attr(source, order)]}}
+      end
+
+    fields =
+      for spec <- Ecto.Hosi.Derived.specs(mod), into: fields do
+        {spec.attr, %{type: :string, unique: :value}}
       end
 
     Map.put(fields, Attr.marker(source), %{type: :boolean})

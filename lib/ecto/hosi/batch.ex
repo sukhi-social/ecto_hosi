@@ -86,6 +86,9 @@ defmodule Ecto.Hosi.Batch do
 
     # only values that are known now can be checked for uniqueness
     known = for {attr, v} <- facts, not is_list(v), do: {attr, v}
+    derived = Ecto.Hosi.Derived.extend(meta, source, nil, known) -- known
+    facts = facts ++ derived
+    known = known ++ derived
 
     case Ecto.Adapters.Hosi.__check_unique__(meta, known, nil) do
       [] -> :ok
@@ -146,6 +149,19 @@ defmodule Ecto.Hosi.Batch do
           d = dump(adapter, schema, field, v)
           {[[:create, id, attr, Backend.wrap(meta, attr, d)] | ops], conds, [{attr, d} | sets]}
       end)
+
+    # the derived attributes of the unique rules this change moves
+    nil_attrs = for {field, nil} <- changes, do: {Attr.attr(source, field), nil}
+    entity = fn -> meta.backend.get_entities(meta.conn, [id]) |> Backend.ok!() |> hd() end
+    changed = Enum.reverse(sets) ++ nil_attrs
+    derived = Ecto.Hosi.Derived.extend(meta, source, id, changed, entity) -- changed
+
+    {dops, dconds} =
+      if derived == [], do: {[], []}, else: Ecto.Hosi.Update.set_ops(meta, id, entity.(), derived)
+
+    sets = sets ++ for({a, v} <- derived, not is_nil(v), do: {a, v})
+    ops = Enum.reverse(dops, ops)
+    conds = conds ++ dconds
 
     case Ecto.Adapters.Hosi.__check_unique__(meta, sets, id) do
       [] -> :ok

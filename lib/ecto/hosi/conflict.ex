@@ -262,6 +262,7 @@ defmodule Ecto.Hosi.Conflict do
 
   def ops(meta, source, id, entity, attrs, {fields, _, _}) when is_list(fields) do
     values = for f <- fields, do: {Attr.attr(source, f), Keyword.get(attrs, Attr.attr(source, f))}
+    values = Ecto.Hosi.Derived.extend(meta, source, id, values, fn -> entity end)
     {ops, conds} = Update.set_ops(meta, id, entity, values)
     {ops, [[:holds, id, Attr.marker(source), true] | conds]}
   end

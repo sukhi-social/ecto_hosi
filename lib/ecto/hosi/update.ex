@@ -40,6 +40,7 @@ defmodule Ecto.Hosi.Update do
                   "use set: or inc:"
       end)
 
+    sets = Ecto.Hosi.Derived.extend(meta, source, id, sets, fn -> entity end)
     set_ops(meta, id, entity, sets)
     |> then(fn {ops, conds} -> {ops, [[:holds, id, Attr.marker(source), true] | conds]} end)
   end

@@ -78,7 +78,7 @@ defmodule Ecto.Adapters.Hosi do
   @behaviour Ecto.Adapter.Storage
   @behaviour Ecto.Adapter.Transaction
 
-  alias Ecto.Hosi.{Attr, Backend, Bulk, Conflict, Reader, Schema, Tx, Types}
+  alias Ecto.Hosi.{Attr, Backend, Bulk, Conflict, Derived, Reader, Schema, Tx, Types}
 
   ## ------------------------------------------------------------ Ecto.Adapter
 
@@ -129,6 +129,7 @@ defmodule Ecto.Adapters.Hosi do
     backend = Keyword.get(config, :hosi, Hosi)
     if backend == Hosi, do: wait_for_children!()
     attrs = Schema.build(Keyword.get(config, :schemas, []))
+    derived = Ecto.Hosi.Derived.build(Keyword.get(config, :schemas, []))
     name = Keyword.get(config, :conn_name, Module.concat(repo, Conn))
 
     open =
@@ -150,6 +151,8 @@ defmodule Ecto.Adapters.Hosi do
       backend: backend,
       conn: name,
       attrs: attrs,
+      derived: derived,
+      names: Ecto.Hosi.Derived.names(derived),
       schemas: Map.new(Keyword.get(config, :schemas, []), &{&1.__schema__(:source), &1}),
       precheck_unique: Keyword.get(config, :precheck_unique, true)
     }
@@ -203,7 +206,7 @@ defmodule Ecto.Adapters.Hosi do
 
     case Conflict.find(meta, source, attrs, on_conflict) do
       {:conflict, id} -> upsert_existing(meta, source, id, attrs, on_conflict, returning)
-      :none -> insert_new(meta, source, attrs, on_conflict, returning)
+      :none -> insert_new(meta, source, Derived.extend(meta, source, nil, attrs), on_conflict, returning)
     end
   end
 
@@ -357,6 +360,8 @@ defmodule Ecto.Adapters.Hosi do
   end
 
   defp create_ops(meta, source, attrs, n) do
+    attrs = Derived.extend(meta, source, nil, attrs)
+
     [[:create, [:tmp, n], Attr.marker(source), true]] ++
       for({attr, v} <- attrs, do: [:create, [:tmp, n], attr, Backend.wrap(meta, attr, v)])
   end
@@ -384,7 +389,7 @@ defmodule Ecto.Adapters.Hosi do
           case Conflict.find(meta, source, attrs, on_conflict) do
             {:conflict, id} when nothing? -> {{:skip, id}, seen}
             {:conflict, id} -> {{:old, id, attrs}, seen}
-            :none -> {planned_new(meta, attrs, on_conflict), seen}
+            :none -> {planned_new(meta, source, attrs, on_conflict), seen}
           end
         end
       end)
@@ -441,17 +446,20 @@ defmodule Ecto.Adapters.Hosi do
   end
 
   # A row with no target under `:nothing` is skipped when it would break a unique value.
-  defp planned_new(meta, attrs, {:nothing, _, []}) do
-    if check_unique(meta, attrs, nil) == [], do: {:new, attrs}, else: :skip
+  defp planned_new(meta, source, attrs, {:nothing, _, []}) do
+    if check_unique(meta, Derived.extend(meta, source, nil, attrs), nil) == [],
+      do: {:new, attrs},
+      else: :skip
   end
 
-  defp planned_new(_meta, attrs, _on_conflict), do: {:new, attrs}
+  defp planned_new(_meta, _source, attrs, _on_conflict), do: {:new, attrs}
 
   @impl Ecto.Adapter.Schema
   def update(meta, %{source: source}, fields, filters, returning, _opts) do
     {id, locks} = split_filters(filters)
     marker = Attr.marker(source)
     attrs = field_attrs(source, fields, keep_nil: true)
+    attrs = Derived.extend(meta, source, id, attrs, fn -> read_entity(meta, id) end)
     {nils, sets} = Enum.split_with(attrs, fn {_, v} -> is_nil(v) end)
 
     # Setting a field to nil retracts its current value, which has to be read first.
@@ -652,9 +660,11 @@ defmodule Ecto.Adapters.Hosi do
     for {attr, v} <- attrs,
         match?(%{^attr => %{unique: _}}, meta.attrs),
         taken?(meta, attr, v, self_id) do
-      {:unique, Attr.constraint_name(attr)}
+      {:unique, cname(meta, attr)}
     end
   end
+
+  defp cname(meta, attr), do: Map.get(meta.names, attr) || Attr.constraint_name(attr)
 
   defp taken?(meta, attr, value, self_id) do
     req = %{q: "[:find ?e :in $ ?v :where [?e #{Attr.kw(attr)} ?v]]", inputs: [[:scalar, value]]}
@@ -667,8 +677,8 @@ defmodule Ecto.Adapters.Hosi do
     named = Enum.filter(uniques, &mentions?(message, &1))
 
     case {named, uniques} do
-      {[_ | _], _} -> Enum.map(named, &{:unique, Attr.constraint_name(&1)})
-      {[], [one]} -> [unique: Attr.constraint_name(one)]
+      {[_ | _], _} -> Enum.map(named, &{:unique, cname(meta, &1)})
+      {[], [one]} -> [unique: cname(meta, one)]
       _ -> raise Ecto.Hosi.Error, message: "hosigraph refused the write: " <> message
     end
   end

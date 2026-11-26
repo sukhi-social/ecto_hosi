@@ -103,3 +103,26 @@ end
 defmodule Ecto.Hosi.Test.Repo do
   use Ecto.Repo, otp_app: :ecto_hosi, adapter: Ecto.Adapters.Hosi
 end
+
+defmodule Ecto.Hosi.Test.Pair do
+  use Ecto.Schema
+  use Ecto.Hosi.Schema
+  import Ecto.Changeset
+
+  hosi_unique [:a, :b], name: "pair_a_b_index"
+  hosi_unique :email, lower: [:email], where: [null: [:domain]], name: "pair_local_email_index"
+
+  schema "pair" do
+    field(:a, :integer)
+    field(:b, :integer)
+    field(:email, :string)
+    field(:domain, :string)
+  end
+
+  def changeset(pair, attrs) do
+    pair
+    |> cast(attrs, [:a, :b, :email, :domain])
+    |> unique_constraint(:a, name: :pair_a_b_index)
+    |> unique_constraint(:email, name: :pair_local_email_index)
+  end
+end

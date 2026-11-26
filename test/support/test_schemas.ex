@@ -178,3 +178,7 @@ defmodule Ecto.Hosi.Test.Entry do
   hosi_append_only()
   schema "entry", do: field(:text, :string)
 end
+
+defmodule Ecto.Hosi.Test.Joiner do
+  use Ecto.Repo, otp_app: :ecto_hosi, adapter: Ecto.Adapters.Hosi
+end

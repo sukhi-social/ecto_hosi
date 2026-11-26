@@ -120,11 +120,30 @@ defmodule Ecto.Adapters.Hosi do
     end
   end
 
+  @shared_meta [:backend, :conn, :attrs, :derived, :refs, :append_only, :names, :schemas, :precheck_unique]
+
   @impl Ecto.Adapter
   def ensure_all_started(_config, _type), do: {:ok, []}
 
   @impl Ecto.Adapter
   def init(config) do
+    case Keyword.get(config, :join) do
+      nil -> init_own(config)
+      other -> join(other)
+    end
+  end
+
+  # `join: OtherRepo` (or `{OtherRepo, dynamic_name}`): a second repo over the SAME hosigraph, in
+  # the same BEAM. It starts nothing and shares the other repo's connection and rules (attributes,
+  # derived keys, foreign keys), so its writes keep them in step. The other repo has to be started.
+  defp join({_repo, name}) do
+    child = %{id: {:joined, name}, start: {Task, :start_link, [fn -> :ok end]}, restart: :temporary}
+    {:ok, child, name |> Ecto.Adapter.lookup_meta() |> Map.take(@shared_meta)}
+  end
+
+  defp join(repo) when is_atom(repo), do: join({repo, repo.get_dynamic_repo()})
+
+  defp init_own(config) do
     repo = Keyword.fetch!(config, :repo)
     backend = Keyword.get(config, :hosi, Hosi)
     if backend == Hosi, do: wait_for_children!()
